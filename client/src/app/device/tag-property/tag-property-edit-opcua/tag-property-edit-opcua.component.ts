@@ -20,7 +20,8 @@ export class TagPropertyEditOpcuaComponent implements OnInit, OnDestroy {
     tagType = OpcUaTagType;
 
     config = {
-        height: '640px',
+        // custom-SCADA: lower than 640px so that the OK button stays visible under the NodeId block
+        height: 'max(240px, calc(100vh - 420px))',
         width: '1000px'
     };
 
