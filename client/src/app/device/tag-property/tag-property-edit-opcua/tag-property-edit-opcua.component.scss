@@ -11,4 +11,66 @@
             width:calc(100% - 7px);
         }
     }
+
+    /* custom-SCADA: add a tag by NodeId */
+    .manual-block {
+        margin: 0 10px 12px 10px;
+        padding: 8px 10px;
+        border: 1px solid rgba(128, 128, 128, 0.5);
+        border-radius: 4px;
+    }
+    .manual-title {
+        font-size: 13px;
+        font-weight: bold;
+        margin-bottom: 6px;
+    }
+    .manual-row {
+        display: flex;
+        align-items: flex-end;
+    }
+    .manual-nodeid {
+        width: 320px;
+    }
+    .manual-name {
+        width: 200px;
+    }
+    .manual-type {
+        width: 140px;
+    }
+    .manual-hint {
+        font-size: 11px;
+        opacity: 0.6;
+        margin-top: 4px;
+    }
+    .manual-error {
+        font-size: 12px;
+        color: #f44336;
+        margin-top: 4px;
+    }
+    .manual-list {
+        margin-top: 8px;
+        max-height: 120px;
+        overflow: auto;
+    }
+    .manual-item {
+        display: flex;
+        align-items: center;
+        font-size: 12px;
+        padding: 2px 0;
+        .manual-item-id {
+            width: 320px;
+            font-family: monospace;
+        }
+        .manual-item-name {
+            width: 200px;
+        }
+        .manual-item-type {
+            width: 120px;
+            opacity: 0.7;
+        }
+        .manual-remove {
+            cursor: pointer;
+            font-size: 18px;
+        }
+    }
 }

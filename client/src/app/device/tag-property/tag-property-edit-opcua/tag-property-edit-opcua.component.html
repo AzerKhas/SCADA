@@ -19,6 +19,11 @@
                     <span>{{'device.tag-property-name' | translate}}</span>
                     <input formControlName="tagName" type="text" readonly>
                 </div>
+                <!-- custom-SCADA: NodeId of the tag -->
+                <div class="my-form-field item-block mt10">
+                    <span>{{'device.opcua-manual-nodeid' | translate}}</span>
+                    <input [value]="data.tag.address" type="text" readonly>
+                </div>
                 <div class="my-form-field item-block mt10">
                     <span>{{'device.tag-property-type' | translate}}</span>
                     <mat-select formControlName="tagType">
@@ -34,6 +39,39 @@
             </div>
         </ng-container>
         <ng-template #addTag>
+            <!-- custom-SCADA: add a tag by typing its NodeId, without browsing -->
+            <div class="manual-block">
+                <div class="manual-title">{{'device.opcua-manual-title' | translate}}</div>
+                <div class="manual-row">
+                    <div class="my-form-field">
+                        <span>{{'device.opcua-manual-nodeid' | translate}}</span>
+                        <input [(ngModel)]="manualNodeId" type="text" placeholder="ns=3;i=1001" class="manual-nodeid" (keyup.enter)="onAddManualNode()">
+                    </div>
+                    <div class="my-form-field ml10">
+                        <span>{{'device.tag-property-name' | translate}}</span>
+                        <input [(ngModel)]="manualName" type="text" class="manual-name">
+                    </div>
+                    <div class="my-form-field ml10">
+                        <span>{{'device.tag-property-type' | translate}}</span>
+                        <mat-select [(value)]="manualType" class="manual-type">
+                            <mat-option value=""></mat-option>
+                            <mat-option *ngFor="let type of tagType | enumToArray" [value]="type.key">{{ type.value }}</mat-option>
+                        </mat-select>
+                    </div>
+                    <button mat-stroked-button class="ml10" (click)="onAddManualNode()">{{'device.opcua-manual-add' | translate}}</button>
+                </div>
+                <div class="manual-hint">{{'device.opcua-manual-hint' | translate}}</div>
+                <div class="manual-error" *ngIf="manualError">{{manualError | translate}}</div>
+                <div class="manual-list" *ngIf="manualNodes.length">
+                    <div class="manual-item" *ngFor="let n of manualNodes; let i = index">
+                        <span class="manual-item-id">{{n.id}}</span>
+                        <span class="manual-item-name">{{n.text}}</span>
+                        <span class="manual-item-type">{{n.type}}</span>
+                        <mat-icon class="manual-remove" (click)="onRemoveManualNode(i)">clear</mat-icon>
+                    </div>
+                </div>
+            </div>
+            <div class="manual-title" style="margin: 0 10px 6px 10px">{{'device.opcua-browse-title' | translate}}</div>
             <div style="overflow: auto; margin: 0px 10px">
                 <ngx-treetable #treetable [config]="config" (expand)="queryNext($event)"></ngx-treetable>
             </div>

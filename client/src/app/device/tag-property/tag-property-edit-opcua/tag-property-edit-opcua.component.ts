@@ -24,6 +24,13 @@ export class TagPropertyEditOpcuaComponent implements OnInit, OnDestroy {
         width: '1000px'
     };
 
+    /** custom-SCADA: tags added by typing the NodeId (ns=..;i=.. / ns=..;s=..), without browsing */
+    manualNodeId = '';
+    manualName = '';
+    manualType = '';
+    manualNodes: Node[] = [];
+    manualError = '';
+
     constructor(
         private fb: UntypedFormBuilder,
         private hmiService: HmiService,
@@ -132,6 +139,36 @@ export class TagPropertyEditOpcuaComponent implements OnInit, OnDestroy {
     addError(parent: string, error: any) {
     }
 
+    /** custom-SCADA: valid OPC UA NodeId, ex. ns=3;i=1001, ns=3;s="DB_Pompe"."Marche", i=2258 */
+    static isValidNodeId(nodeId: string): boolean {
+        return /^(ns=\d+;)?(i=\d+|s=.+|g=[0-9a-fA-F-]{36}|b=.+)$/.test((nodeId || '').trim());
+    }
+
+    /** custom-SCADA: add the typed NodeId to the list of tags to create */
+    onAddManualNode() {
+        const nodeId = (this.manualNodeId || '').trim();
+        this.manualError = '';
+        if (!TagPropertyEditOpcuaComponent.isValidNodeId(nodeId)) {
+            this.manualError = 'device.opcua-manual-invalid';
+            return;
+        }
+        const exists = Object.values(this.data.device.tags || {}).some((t: Tag) => t.address === nodeId) ||
+            this.manualNodes.some(n => n.id === nodeId);
+        if (exists) {
+            this.manualError = 'device.opcua-manual-exists';
+            return;
+        }
+        const node = new Node(nodeId, (this.manualName || '').trim() || nodeId);
+        node.type = this.manualType || '';
+        this.manualNodes.push(node);
+        this.manualNodeId = '';
+        this.manualName = '';
+    }
+
+    onRemoveManualNode(index: number) {
+        this.manualNodes.splice(index, 1);
+    }
+
     onNoClick(): void {
         this.dialogRef.close();
     }
@@ -140,7 +177,14 @@ export class TagPropertyEditOpcuaComponent implements OnInit, OnDestroy {
         if (this.data.tag) {
             this.result.emit(this.formGroup.getRawValue());
         } else {
-            this.data.nodes = [];
+            // custom-SCADA: a NodeId typed but not yet added with the button is added too
+            if (this.manualNodeId?.trim()) {
+                this.onAddManualNode();
+                if (this.manualError) {
+                    return;
+                }
+            }
+            this.data.nodes = [...this.manualNodes];
             Object.keys(this.treetable.nodes).forEach((key) => {
                 let n: Node = this.treetable.nodes[key];
                 if (n.checked && n.enabled && (n.type || !n.childs || n.childs.length == 0)) {
