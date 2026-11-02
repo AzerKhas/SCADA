@@ -1,0 +1,46 @@
+<div class="s7-import">
+    <h1 mat-dialog-title class="dialog-title" mat-dialog-draggable>{{'device.s7import-title' | translate}} - {{data.device.name}}</h1>
+    <mat-icon (click)="onNoClick()" class="dialog-close-btn">clear</mat-icon>
+    <div mat-dialog-content>
+        <mat-radio-group [(ngModel)]="source" (change)="onSourceChange()" class="source-group">
+            <mat-radio-button value="tagtable" color="primary">{{'device.s7import-source-tagtable' | translate}}</mat-radio-button>
+            <mat-radio-button value="db" color="primary">{{'device.s7import-source-db' | translate}}</mat-radio-button>
+        </mat-radio-group>
+        <div class="help">{{(source === 'db' ? 'device.s7import-help-db' : 'device.s7import-help-tagtable') | translate}}</div>
+
+        <div class="file-row">
+            <div class="my-form-field" *ngIf="source === 'db'">
+                <span>{{'device.s7import-db-number' | translate}}</span>
+                <input numberOnly [(ngModel)]="dbNumber" type="number" min="1" style="width: 90px">
+            </div>
+            <button mat-stroked-button (click)="fileInput.click()">{{'device.s7import-choose-file' | translate}}</button>
+            <input #fileInput type="file" style="display: none" [accept]="source === 'db' ? '.db,.scl,.txt' : '.csv,.txt'" (change)="onFileSelected($event)">
+            <span class="file-name">{{fileName}}</span>
+        </div>
+        <div class="error" *ngIf="error">{{error | translate}}</div>
+
+        <div class="table" *ngIf="rows.length">
+            <div class="row header">
+                <mat-checkbox color="primary" [checked]="allSelected" (change)="onToggleAll($event.checked)"></mat-checkbox>
+                <span class="c-name">{{'device.tag-property-name' | translate}}</span>
+                <span class="c-type">{{'device.tag-property-type' | translate}}</span>
+                <span class="c-address">{{'device.tag-property-address' | translate}}</span>
+                <span class="c-status"></span>
+            </div>
+            <div class="rows">
+                <div class="row" *ngFor="let r of rows" [class.disabled]="!r.selectable">
+                    <mat-checkbox color="primary" [(ngModel)]="r.selected" [disabled]="!r.selectable"></mat-checkbox>
+                    <span class="c-name">{{r.name}}</span>
+                    <span class="c-type">{{r.type}}</span>
+                    <span class="c-address">{{r.address}}</span>
+                    <span class="c-status">{{r.status | translate}}</span>
+                </div>
+            </div>
+            <div class="count">{{'device.s7import-selected' | translate}} : {{selectedCount}} / {{rows.length}}</div>
+        </div>
+    </div>
+    <div mat-dialog-actions class="dialog-action">
+        <button mat-raised-button (click)="onNoClick()">{{'dlg.cancel' | translate}}</button>
+        <button mat-raised-button color="primary" [disabled]="!selectedCount" (click)="onOkClick()">{{'device.s7import-ok' | translate}}</button>
+    </div>
+</div>

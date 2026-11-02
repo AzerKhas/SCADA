@@ -16,6 +16,8 @@ import { HmiService } from '../../_services/hmi.service';
 import { ConfirmDialogComponent } from '../../gui-helpers/confirm-dialog/confirm-dialog.component';
 import { Utils } from '../../_helpers/utils';
 import { TagPropertyService } from '../tag-property/tag-property.service';
+import { S7ImportComponent, S7ImportData } from '../s7-import/s7-import.component';
+import { S7ImportVariable } from '../s7-import/s7-import.helper';
 
 @Component({
     selector: 'app-device-list',
@@ -232,6 +234,31 @@ export class DeviceListComponent implements OnInit, AfterViewInit {
             });
             return;
         }
+    }
+
+    /** custom-SCADA: create S7 tags from the variables of a TIA Portal export (tag table or DB source) */
+    onImportS7() {
+        const dialogRef = this.dialog.open(S7ImportComponent, {
+            position: { top: '60px' },
+            data: <S7ImportData>{ device: this.deviceSelected }
+        });
+        dialogRef.afterClosed().subscribe((variables: S7ImportVariable[]) => {
+            if (!variables?.length) {
+                return;
+            }
+            const device = this.deviceSelected;
+            device.tags = device.tags || {};
+            variables.forEach(v => {
+                const tag = new Tag(Utils.getGUID(TAG_PREFIX));
+                tag.name = v.name;
+                tag.type = v.type;
+                tag.address = v.address;
+                device.tags[tag.id] = tag;
+                this.tagsMap[tag.id] = tag;
+            });
+            this.projectService.setDeviceTags(device);
+            this.bindToTable(device.tags);
+        });
     }
 
     onScanRedisTag() {
