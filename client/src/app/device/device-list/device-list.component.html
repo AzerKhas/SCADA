@@ -29,6 +29,9 @@
                         <button *ngIf="!readonly && deviceSelected?.type === deviceType.SiemensS7" mat-icon-button (click)="onImportS7()" class="remove" matTooltip="{{'device.s7import-title' | translate}}">
                             <mat-icon>file_upload</mat-icon>
                         </button>
+                        <button *ngIf="!readonly && deviceSelected?.type === deviceType.SiemensS7" mat-icon-button (click)="onExploreS7()" class="remove" matTooltip="{{'device.s7explore-title' | translate}}">
+                            <mat-icon>travel_explore</mat-icon>
+                        </button>
                     </mat-header-cell>
                     <mat-cell *matCellDef="let element" [ngClass]="'selectidthClass'">
                         <button mat-icon-button (click)="onEditRow(element)" class="remove" matTooltip="{{'device.list-edit' | translate}}"

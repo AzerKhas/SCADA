@@ -51,6 +51,7 @@ import { TagOptionsComponent } from './device/tag-options/tag-options.component'
 import { TopicPropertyComponent } from './device/topic-property/topic-property.component';
 import { DeviceListComponent } from './device/device-list/device-list.component';
 import { S7ImportComponent } from './device/s7-import/s7-import.component';
+import { S7ExploreComponent } from './device/s7-import/s7-explore.component';
 import { DeviceMapComponent } from './device/device-map/device-map.component';
 import { FuxaViewComponent } from './fuxa-view/fuxa-view.component';
 import { CardsViewComponent } from './cards-view/cards-view.component';
@@ -300,6 +301,7 @@ export const myCustomTooltipDefaults: MatTooltipDefaultOptions = {
         LayoutHeaderItemPropertyComponent,
         DeviceListComponent,
         S7ImportComponent,
+        S7ExploreComponent,
         DeviceMapComponent,
         FuxaViewComponent,
         FuxaViewDialogComponent,

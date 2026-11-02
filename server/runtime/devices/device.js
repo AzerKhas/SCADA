@@ -351,6 +351,9 @@ function Device(data, runtime) {
                 });
             } else if (data.type === DeviceEnum.GenericEthernetIP) {
                 comm.browse(path, callback).then(resolve).catch(reject);
+            } else if (data.type === DeviceEnum.S7 && comm.browse) {
+                // custom-SCADA: explore the PLC (data blocks, M / I / Q areas)
+                comm.browse(path).then(resolve).catch(reject);
             } else {
                 reject('Browse not supported!');
             }

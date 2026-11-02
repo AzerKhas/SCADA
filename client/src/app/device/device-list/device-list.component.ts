@@ -18,6 +18,7 @@ import { Utils } from '../../_helpers/utils';
 import { TagPropertyService } from '../tag-property/tag-property.service';
 import { S7ImportComponent, S7ImportData } from '../s7-import/s7-import.component';
 import { S7ImportVariable } from '../s7-import/s7-import.helper';
+import { S7ExploreComponent, S7ExploreData } from '../s7-import/s7-explore.component';
 
 @Component({
     selector: 'app-device-list',
@@ -242,23 +243,35 @@ export class DeviceListComponent implements OnInit, AfterViewInit {
             position: { top: '60px' },
             data: <S7ImportData>{ device: this.deviceSelected }
         });
-        dialogRef.afterClosed().subscribe((variables: S7ImportVariable[]) => {
-            if (!variables?.length) {
-                return;
-            }
-            const device = this.deviceSelected;
-            device.tags = device.tags || {};
-            variables.forEach(v => {
-                const tag = new Tag(Utils.getGUID(TAG_PREFIX));
-                tag.name = v.name;
-                tag.type = v.type;
-                tag.address = v.address;
-                device.tags[tag.id] = tag;
-                this.tagsMap[tag.id] = tag;
-            });
-            this.projectService.setDeviceTags(device);
-            this.bindToTable(device.tags);
+        dialogRef.afterClosed().subscribe((variables: S7ImportVariable[]) => this.addS7Tags(variables));
+    }
+
+    /** custom-SCADA: explore the PLC (data blocks, M / I / Q areas) and name the addresses to create S7 tags */
+    onExploreS7() {
+        const dialogRef = this.dialog.open(S7ExploreComponent, {
+            position: { top: '60px' },
+            disableClose: true,
+            data: <S7ExploreData>{ device: this.deviceSelected }
         });
+        dialogRef.afterClosed().subscribe((variables: S7ImportVariable[]) => this.addS7Tags(variables));
+    }
+
+    private addS7Tags(variables: S7ImportVariable[]) {
+        if (!variables?.length) {
+            return;
+        }
+        const device = this.deviceSelected;
+        device.tags = device.tags || {};
+        variables.forEach(v => {
+            const tag = new Tag(Utils.getGUID(TAG_PREFIX));
+            tag.name = v.name;
+            tag.type = v.type;
+            tag.address = v.address;
+            device.tags[tag.id] = tag;
+            this.tagsMap[tag.id] = tag;
+        });
+        this.projectService.setDeviceTags(device);
+        this.bindToTable(device.tags);
     }
 
     onScanRedisTag() {

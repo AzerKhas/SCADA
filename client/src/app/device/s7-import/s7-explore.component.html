@@ -1,0 +1,87 @@
+<div class="s7-import s7-explore">
+    <h1 mat-dialog-title class="dialog-title" mat-dialog-draggable>{{'device.s7explore-title' | translate}} - {{data.device.name}}</h1>
+    <mat-icon (click)="onNoClick()" class="dialog-close-btn">clear</mat-icon>
+    <div mat-dialog-content>
+        <div class="help">{{'device.s7explore-help' | translate}}</div>
+        <div class="error" *ngIf="error">{{error | translate}}</div>
+        <div class="explore">
+            <!-- blocks found in the PLC -->
+            <div class="blocks">
+                <div class="blocks-title">
+                    <span>{{'device.s7explore-blocks' | translate}}</span>
+                    <button mat-icon-button (click)="onRefreshList()" matTooltip="{{'device.s7explore-refresh' | translate}}"><mat-icon>refresh</mat-icon></button>
+                </div>
+                <div class="block" *ngFor="let b of blocks" [class.active]="b === selected" [class.disabled]="!b.size" (click)="onSelectBlock(b)">
+                    <span>{{blockLabel(b)}}</span>
+                    <span class="size">{{b.size ? b.size + ' ' + ('device.s7explore-bytes' | translate) : ('device.s7explore-unreadable' | translate)}}</span>
+                </div>
+                <div class="loading" *ngIf="loading">{{'device.s7explore-loading' | translate}}</div>
+            </div>
+            <!-- bytes of the selected block -->
+            <div class="bytes" *ngIf="selected">
+                <div class="bytes-title">
+                    <span>{{blockLabel(selected)}} : {{start}} → {{start + bytes.length - 1}}</span>
+                    <span class="nav">
+                        <button mat-icon-button (click)="read(start - 64)" [disabled]="start === 0"><mat-icon>chevron_left</mat-icon></button>
+                        <button mat-icon-button (click)="read(start)" matTooltip="{{'device.s7explore-refresh' | translate}}"><mat-icon>refresh</mat-icon></button>
+                        <button mat-icon-button (click)="read(start + 64)" [disabled]="start + bytes.length >= selected.size"><mat-icon>chevron_right</mat-icon></button>
+                    </span>
+                </div>
+                <div class="byte-grid">
+                    <div class="byte" *ngFor="let v of bytes; let i = index" [class.active]="start + i === form.byte" (click)="onSelectByte(start + i)"
+                         [matTooltip]="(start + i) + ' : ' + v + ' (' + bits(v) + ')'">
+                        <span class="offset">{{start + i}}</span>
+                        <span class="hex">{{('0' + v.toString(16).toUpperCase()).slice(-2)}}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- name a tag on the selected address -->
+        <div class="tag-form" *ngIf="selected">
+            <div class="my-form-field">
+                <span>{{'device.tag-property-name' | translate}}</span>
+                <input [(ngModel)]="form.name" type="text" style="width: 200px" (keyup.enter)="onAddTag()">
+            </div>
+            <div class="my-form-field ml10">
+                <span>{{'device.tag-property-type' | translate}}</span>
+                <mat-select [(value)]="form.type" style="width: 90px">
+                    <mat-option *ngFor="let t of tagTypes" [value]="t">{{t}}</mat-option>
+                </mat-select>
+            </div>
+            <div class="my-form-field ml10">
+                <span>{{'device.s7explore-byte' | translate}}</span>
+                <input numberOnly [(ngModel)]="form.byte" type="number" min="0" style="width: 70px">
+            </div>
+            <div class="my-form-field ml10" *ngIf="form.type === 'Bool'">
+                <span>{{'device.s7explore-bit' | translate}}</span>
+                <input numberOnly [(ngModel)]="form.bit" type="number" min="0" max="7" style="width: 50px">
+            </div>
+            <div class="my-form-field ml10">
+                <span>{{'device.tag-property-address' | translate}}</span>
+                <input [value]="formAddress" type="text" readonly style="width: 130px">
+            </div>
+            <div class="my-form-field ml10">
+                <span>{{'device.s7explore-value' | translate}}</span>
+                <input [value]="formValue" type="text" readonly style="width: 90px">
+            </div>
+            <button mat-stroked-button class="ml10" (click)="onAddTag()">{{'device.opcua-manual-add' | translate}}</button>
+        </div>
+        <div class="error" *ngIf="formError">{{formError | translate}}</div>
+
+        <div class="table" *ngIf="pending.length">
+            <div class="rows">
+                <div class="row" *ngFor="let p of pending; let i = index">
+                    <span class="c-name">{{p.name}}</span>
+                    <span class="c-type">{{p.type}}</span>
+                    <span class="c-address">{{p.address}}</span>
+                    <mat-icon class="remove-icon" (click)="onRemovePending(i)">clear</mat-icon>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div mat-dialog-actions class="dialog-action">
+        <button mat-raised-button (click)="onNoClick()">{{'dlg.cancel' | translate}}</button>
+        <button mat-raised-button color="primary" [disabled]="!pending.length" (click)="onOkClick()">{{'device.s7explore-ok' | translate}} ({{pending.length}})</button>
+    </div>
+</div>

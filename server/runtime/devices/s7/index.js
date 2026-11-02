@@ -257,6 +257,13 @@ function S7client(_data, _logger, _events, _runtime) {
     }
 
     /**
+     * custom-SCADA: explore the PLC (data blocks, M / I / Q areas, bytes) to create tags
+     */
+    this.browse = function (node) {
+        return require('./explorer').browse(snap7, data, node);
+    }
+
+    /**
      * Bind the DAQ store function
      */
     this.bindAddDaq = function (fnc) {
