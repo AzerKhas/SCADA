@@ -815,8 +815,13 @@ export class GaugeShapeStyle {
     }
 }
 
+export type GaugeShapeZoomMode = 'gain' | 'formula';
+
 export class GaugeShapeAdvanced {
     zoom = false;
+    /** gain: value x gain + offset, formula: math formula with x = value (FormulaHelper) */
+    zoomMode: GaugeShapeZoomMode = 'gain';
+    zoomFormula = '';
     zoomGain = 1;
     zoomOffset = 0;
     /** gain and offset read from tags */

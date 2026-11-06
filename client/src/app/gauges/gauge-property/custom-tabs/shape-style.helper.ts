@@ -1,5 +1,6 @@
 import { GaugeSettings, GaugeShapeAdvanced, GaugeShapeCondition, GaugeShapeGeneral, GaugeShapeLabel, GaugeShapeStyle, GaugeShapeVisibility, GaugeStatus } from '../../../_models/hmi';
 import { Utils } from '../../../_helpers/utils';
+import { FormulaHelper } from './formula.helper';
 
 /**
  * custom-SCADA: applies the style of the pages "General" and "Label" to the SVG element of an object.
@@ -69,9 +70,28 @@ export class ShapeStyleHelper {
         return (num < 0 ? '-' : '') + result;
     }
 
+    /** shown instead of the value when the formula cannot be calculated (invalid formula, division by 0, sqrt of a negative value) */
+    static readonly invalidValue = '---';
+
+    /**
+     * zoom of the page Advanced: value x gain + offset, or the formula with x = value
+     * @returns the converted value, or null if the formula cannot be calculated
+     */
+    static zoomValue(num: number, advanced: GaugeShapeAdvanced, values: Record<string, any> = {}): number | null {
+        if (!advanced?.zoom) {
+            return num;
+        }
+        if (advanced.zoomMode === 'formula') {
+            return FormulaHelper.evaluate(advanced.zoomFormula, num);
+        }
+        const gain = ShapeStyleHelper.getParameter(advanced.zoomGain, advanced.zoomTransform, advanced.zoomGainVariableId, values);
+        const offset = ShapeStyleHelper.getParameter(advanced.zoomOffset, advanced.zoomTransform, advanced.zoomOffsetVariableId, values);
+        return num * (gain ?? 1) + (offset ?? 0);
+    }
+
     /**
      * format the value of a Value object with the pages General and Advanced
-     * (zoom: value x gain + offset, display range colors, ratio display; parameters as values or tags)
+     * (zoom: value x gain + offset or formula, display range colors, ratio display; parameters as values or tags)
      * @param textElement SVG text of the value, its colors are changed when the value is out of the display range
      * @param values last values of the tags of the object (for the parameters read from tags)
      * @returns the formatted value, or null to keep the FUXA formatting
@@ -82,10 +102,12 @@ export class ShapeStyleHelper {
             return null;
         }
         const advanced = style.advanced;
-        if (advanced?.zoom) {
-            const gain = ShapeStyleHelper.getParameter(advanced.zoomGain, advanced.zoomTransform, advanced.zoomGainVariableId, values);
-            const offset = ShapeStyleHelper.getParameter(advanced.zoomOffset, advanced.zoomTransform, advanced.zoomOffsetVariableId, values);
-            num = num * (gain ?? 1) + (offset ?? 0);
+        num = ShapeStyleHelper.zoomValue(num, advanced, values);
+        if (num === null) {
+            if (textElement) {
+                ShapeStyleHelper.setRangeColors(textElement, 0, null, null, advanced);
+            }
+            return ShapeStyleHelper.invalidValue;
         }
         if (textElement) {
             const min = ShapeStyleHelper.getParameter(advanced?.rangeMin, advanced?.rangeDynamic, advanced?.rangeMinVariableId, values);
@@ -131,7 +153,7 @@ export class ShapeStyleHelper {
 
     private static getAdvancedSignals(advanced: GaugeShapeAdvanced): string[] {
         const ids = [];
-        if (advanced?.zoom && advanced.zoomTransform) {
+        if (advanced?.zoom && advanced.zoomMode !== 'formula' && advanced.zoomTransform) {
             ids.push(advanced.zoomGainVariableId, advanced.zoomOffsetVariableId);
         }
         if (advanced?.displayRange && advanced.rangeDynamic) {

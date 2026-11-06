@@ -48,3 +48,11 @@
 .color-groups .custom-group { flex: 1; }
 .color-groups .field-row > span { width: 140px; }
 .color-input.color-box { width: 50px; }
+
+/* Zoom: gain/offset or formula */
+.zoom-modes mat-radio-button { margin-right: 24px; }
+.custom-tab .field-formula { width: 360px; font-family: monospace; }
+.custom-tab .field-formula.formula-invalid { border-color: #e53935 !important; }
+.formula-error { color: #e53935; font-size: 12px; margin: -4px 0 8px 170px; }
+.formula-result { font-family: monospace; font-size: 14px; }
+.formula-help div { margin-bottom: 2px; }

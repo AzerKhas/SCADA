@@ -83,7 +83,11 @@ export class ValueComponent extends GaugeBaseComponent {
                         if (Number.isInteger(digit) && digit >= 0) {
                             const numericValue = Utils.toFiniteNumber(sig.value); // o val, ma coerente
                             if (numericValue !== null) {
-                                val = numericValue.toFixed(digit);
+                                // custom-SCADA: the zoom of the page Advanced (gain/offset or formula) is applied before the digits
+                                const zoomed = ga.property.variableId === sig.id && ga.property.style?.advanced?.zoom
+                                    ? ShapeStyleHelper.zoomValue(numericValue, ga.property.style.advanced, gaugeStatus.variablesValue)
+                                    : numericValue;
+                                val = zoomed === null ? ShapeStyleHelper.invalidValue : zoomed.toFixed(digit);
                             }
                         }
                     } else if (ga.property.style && ShapeStyleHelper.isValueSignal(ga.property, sig.id)) {

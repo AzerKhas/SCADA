@@ -3,6 +3,32 @@
         <legend>{{'gauges.shape-adv-zoom' | translate}}</legend>
         <mat-checkbox color="primary" [(ngModel)]="advanced.zoom">{{'gauges.shape-adv-zoom' | translate}}</mat-checkbox>
         <div class="sub-fields" *ngIf="advanced.zoom">
+            <mat-radio-group [(ngModel)]="advanced.zoomMode" class="zoom-modes">
+                <mat-radio-button color="primary" value="gain">{{'gauges.shape-adv-mode-gain' | translate}}</mat-radio-button>
+                <mat-radio-button color="primary" value="formula">{{'gauges.shape-adv-mode-formula' | translate}}</mat-radio-button>
+            </mat-radio-group>
+        </div>
+        <div class="sub-fields" *ngIf="advanced.zoom && advanced.zoomMode === 'formula'">
+            <div class="my-form-field field-row">
+                <span>{{'gauges.shape-adv-formula-input' | translate}} :</span>
+                <input [(ngModel)]="advanced.zoomFormula" type="text" class="field-formula" placeholder="x * 0.1 + 5"
+                       [class.formula-invalid]="advanced.zoomFormula && formulaError">
+            </div>
+            <div class="formula-error" *ngIf="formulaError as err">{{err.key | translate: err.params}}</div>
+            <div class="my-form-field field-row" *ngIf="!formulaError">
+                <span>{{'gauges.shape-adv-formula-test' | translate}} :</span>
+                <input numberOnly [(ngModel)]="testValue" type="number" class="field-number">
+                <span class="field-sep">→</span>
+                <b class="formula-result">{{testResult !== null ? testResult : '---'}}</b>
+            </div>
+            <div class="sub-info formula-help">
+                <div>{{'gauges.shape-adv-formula-help-x' | translate}}</div>
+                <div>{{'gauges.shape-adv-formula-help-ops' | translate}} : + − * / % ^ ( ) &gt; &lt; &gt;= &lt;= == !=</div>
+                <div>{{'gauges.shape-adv-formula-help-fn' | translate}} : {{functionNames}}, PI, E</div>
+                <div>{{'gauges.shape-adv-formula-help-examples' | translate}} : x * 0.1 + 5 · sqrt(x) * 4.2 · round(x / 10, 1) · limit(x, 0, 100) · si(x &gt; 100, 100, x) · bit(x, 3)</div>
+            </div>
+        </div>
+        <div class="sub-fields" *ngIf="advanced.zoom && advanced.zoomMode !== 'formula'">
             <div class="formula">
                 <span>{{'gauges.shape-adv-formula' | translate}} :</span>
                 <div>
