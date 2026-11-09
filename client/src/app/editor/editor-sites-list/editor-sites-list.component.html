@@ -21,7 +21,9 @@
             <div *ngFor="let page of getPages(site); trackBy: trackPage" class="leftbar-item pointer site-page"
                  [class.leftbar-item-active]="isCurrentPage(site, page)" (click)="onOpenPage(site, page)">
                 <mat-icon class="leftbar-item-type item-icon-page">description</mat-icon>
-                <span class="site-name">{{page.name}}</span>
+                <span class="site-name" [matTooltip]="getFile(site, page)?.file">{{page.name}}</span>
+                <mat-icon *ngIf="getFile(site, page) as file" class="page-file" (click)="onOpenFile(file);$event.stopPropagation()"
+                          matTooltip="{{'editor.sites-open-file' | translate: { file: file.file } }}">open_in_new</mat-icon>
                 <ng-container *ngIf="site.name === currentSite">
                     <mat-icon aria-label="More" [matMenuTriggerFor]="menupage" (click)="$event.stopPropagation()">more_vert</mat-icon>
                     <mat-icon *ngIf="isInMenu(page)" class="page-in-menu" matTooltip="{{'editor.sites-page-in-menu' | translate}}">menu</mat-icon>

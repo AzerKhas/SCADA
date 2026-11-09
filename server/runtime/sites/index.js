@@ -19,6 +19,9 @@ const siteTemplate = require('./template');
 const SITE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
 const SITE_URL = /^\/site\/([^/?#]+)(\/.*)?$/;
 const SITE_FILE = 'site.json';
+/** HTML files of a site written by its instance (files.js): /site/<name>/fichiers/accueil.html */
+const FILE_URL = /^\/fichiers\/([a-z0-9-]+\.html)(\?.*)?$/;
+const PAGES_FILE = 'pages.json';
 /** time to wait for a new instance before sending its first project */
 const START_TIMEOUT = 60000;
 
@@ -80,6 +83,10 @@ function onRequest(req, res, next) {
         // the base href of the site needs the final /
         return res.redirect(301, url.replace(/^\/site\/[^/?#]+/, `/site/${encodeURIComponent(site.name)}/`));
     }
+    const file = match[2].match(FILE_URL);
+    if (file) {
+        return sendSiteFile(site, decodeURIComponent(file[1]), res);
+    }
     forward(site, req, res);
 }
 
@@ -120,8 +127,26 @@ function siteInfo(site) {
         url: base + '/',
         editorUrl: base + '/editor',
         labUrl: base + '/lab',
-        pages: []
+        pages: [],
+        files: siteFiles(site).map(f => ({ file: f.file, page: f.page, viewId: f.viewId, url: `${base}/fichiers/${f.file}` }))
     };
+}
+
+/** HTML files of the site (list written by its instance after each save) */
+function siteFiles(site) {
+    try {
+        const manifest = JSON.parse(fs.readFileSync(path.join(sitesDir, site.name, PAGES_FILE), 'utf8'));
+        return (manifest.files || []).filter(f => FILE_URL.test(`/fichiers/${f.file}`));
+    } catch (err) {
+        return [];
+    }
+}
+
+function sendSiteFile(site, file, res) {
+    if (!siteFiles(site).some(f => f.file === file)) {
+        return sendPage(res, 404, 'Fichier introuvable', `Le fichier « ${escapeHtml(file)} » n'existe pas dans le site « ${escapeHtml(site.name)} ».`);
+    }
+    res.type('html').sendFile(path.join(sitesDir, site.name, file));
 }
 
 /** views of the project of the site (pages shown under the site in the editor) */

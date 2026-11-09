@@ -565,6 +565,7 @@
     "editor.sites-page-in-menu": "Page shown in the menu",
     "editor.sites-menu-add": "Show in the menu",
     "editor.sites-menu-remove": "Remove from the menu",
+    "editor.sites-open-file": "Open the file {{file}} of the site (new tab)",
     "editor.views": "Views",
     "editor.resources": "Resources",
     "editor.view-delete": "Delete",

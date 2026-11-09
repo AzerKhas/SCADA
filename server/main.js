@@ -341,6 +341,10 @@ settings.uiHost = settings.uiHost || "0.0.0.0";
 // Wait ending initialization
 events.once('init-runtime-ok', function () {
     logger.info('FUXA init in  ' + utils.endTime(startTime) + 'ms.');
+    // custom-SCADA: instance of a site, its HTML files are written in its folder after each save
+    if (process.env.FUXA_SITE) {
+        require('./runtime/sites/files').init(runtime, settings, logger, process.env.FUXA_SITE);
+    }
     startFuxa();
     initWebcamSnapshotCleanup();
 });

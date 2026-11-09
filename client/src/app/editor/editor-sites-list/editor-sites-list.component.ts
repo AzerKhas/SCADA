@@ -29,6 +29,8 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
 
     private static readonly openViewKey = 'custom-scada.sites.open-view';
     private static readonly siteNameRegex = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
+    /** page Configuration of a new site: its file is configuration.html (with all the properties of the site) */
+    private static readonly configurationViewId = 'v_site_configuration';
 
     sites: SiteInfo[] = [];
     expanded: Record<string, boolean> = {};
@@ -178,11 +180,37 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
     isCurrentPage(site: SiteInfo, page: SitePage): boolean {
         return site.name === this.currentSite && page.id === this.selectedViewId;
     }
+
+    /**
+     * HTML file of the page in the folder of the site (written by the server after each save)
+     * a new page of the current site is not yet in the list of the server: its name is made like on the server
+     */
+    getFile(site: SiteInfo, page: SitePage): SiteFile {
+        const file = site.files?.find(f => f.viewId === page.id);
+        if (file || site.name !== this.currentSite) {
+            return file;
+        }
+        const name = page.id === EditorSitesListComponent.configurationViewId ? 'configuration'
+            : (page.name || 'page').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'page';
+        return { file: `${name}.html`, page: page.name, viewId: page.id, url: `/site/${encodeURIComponent(site.name)}/fichiers/${name}.html` };
+    }
+
+    onOpenFile(file: SiteFile) {
+        window.open(file.url, '_blank');
+    }
 }
 
 export interface SitePage {
     id: string;
     name: string;
+}
+
+export interface SiteFile {
+    file: string;
+    page: string;
+    viewId: string;
+    url: string;
 }
 
 export interface SiteInfo {
@@ -194,4 +222,5 @@ export interface SiteInfo {
     editorUrl: string;
     labUrl: string;
     pages: SitePage[];
+    files: SiteFile[];
 }
