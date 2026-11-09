@@ -8,6 +8,7 @@
         <div class="leftbar-item pointer" [class.site-current]="site.name === currentSite" (click)="onToggle(site)">
             <mat-icon class="leftbar-item-type item-icon-folder">{{expanded[site.name] ? 'folder_open' : 'folder'}}</mat-icon>
             <span class="site-name">{{site.name}}</span>
+            <mat-icon *ngIf="site.busy" class="site-busy">hourglass_empty</mat-icon>
             <mat-icon aria-label="More" [matMenuTriggerFor]="menusite" (click)="$event.stopPropagation()">more_vert</mat-icon>
             <span class="site-state" [class.site-running]="site.running"
                   matTooltip="{{(site.running ? 'editor.sites-running' : 'editor.sites-stopped') | translate}}"></span>
@@ -17,6 +18,14 @@
                 <button mat-menu-item (click)="onConfigureCurves(site)" *ngIf="site.name === currentSite">{{'editor.sites-curves-menu' | translate}}</button>
                 <button mat-menu-item (click)="onOpenSupervision(site)">{{'editor.sites-open-supervision' | translate}}</button>
                 <button mat-menu-item (click)="onOpenApi(site)">{{'editor.sites-open-api' | translate}}</button>
+                <!-- the site open in this editor is managed from the editor of another site or of the main project -->
+                <ng-container *ngIf="site.name !== currentSite">
+                    <mat-divider></mat-divider>
+                    <button mat-menu-item *ngIf="site.running" (click)="onStopStartSite(site, false)" [disabled]="site.busy">{{'editor.sites-stop' | translate}}</button>
+                    <button mat-menu-item *ngIf="!site.running" (click)="onStopStartSite(site, true)" [disabled]="site.busy">{{'editor.sites-start' | translate}}</button>
+                    <button mat-menu-item (click)="onRenameSite(site)" [disabled]="site.busy">{{'editor.sites-rename' | translate}}</button>
+                    <button mat-menu-item (click)="onDeleteSite(site)" [disabled]="site.busy">{{'editor.sites-delete' | translate}}</button>
+                </ng-container>
             </mat-menu>
         </div>
         <ng-container *ngIf="expanded[site.name]">

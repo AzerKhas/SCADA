@@ -4,7 +4,9 @@
  * - each site has its own folder sites/<name>/ used as userDir of its own FUXA instance
  *   (own project, connections, tags and database), started on an internal port with BASE_PATH=/site/<name>
  * - http://server:1881/site/<name>/ is forwarded to the instance of the site (http and websocket)
- * - /api/sites (and /site/<name>/api/sites, called by the editor of a site) lists and creates the sites
+ * - /api/sites (and /site/<name>/api/sites, called by the editor of a site) lists and creates the sites,
+ *   /api/sites/<name>/stop|start|rename and DELETE /api/sites/<name> manage a site
+ *   (a deleted site is moved to sites/_supprimes/, not erased)
  */
 
 'use strict';
@@ -22,6 +24,11 @@ const SITE_FILE = 'site.json';
 /** files of a site written by its instance (files.js): /site/<name>/fichiers/accueil.html, site-api.js */
 const FILE_URL = /^\/fichiers\/([a-z0-9-]+\.(?:html|js))(\?.*)?$/;
 const PAGES_FILE = 'pages.json';
+const SITES_API = /^\/api\/sites(?:\/([^/?#]+)(?:\/(stop|start|rename))?)?\/?(?:\?.*)?$/;
+/** folder of the deleted sites (its name is not a valid site name, so it is not loaded) */
+const DELETED_DIR = '_supprimes';
+/** time to wait for the end of an instance before moving its folder */
+const STOP_TIMEOUT = 15000;
 /** time to wait for a new instance before sending its first project */
 const START_TIMEOUT = 60000;
 
@@ -47,16 +54,16 @@ function init(app, server, _settings, _logger) {
     app.use(onRequest);
     server.on('upgrade', onUpgrade);
     process.on('exit', stopAll);
-    Object.values(sites).forEach(site => start(site));
+    Object.values(sites).filter(site => !site.stopped).forEach(site => start(site));
 }
 
 function loadSites() {
-    fs.readdirSync(sitesDir, { withFileTypes: true }).filter(entry => entry.isDirectory()).forEach(entry => {
+    fs.readdirSync(sitesDir, { withFileTypes: true }).filter(entry => entry.isDirectory() && !entry.name.startsWith('_')).forEach(entry => {
         const file = path.join(sitesDir, entry.name, SITE_FILE);
         try {
             const site = JSON.parse(fs.readFileSync(file, 'utf8'));
             if (site.name === entry.name && SITE_NAME.test(site.name)) {
-                sites[site.name] = { name: site.name, port: site.port, created: site.created };
+                sites[site.name] = { name: site.name, port: site.port, created: site.created, stopped: !!site.stopped };
             }
         } catch (err) {
             logger.warn(`sites: '${entry.name}' ignored (${SITE_FILE} missing or invalid)`);
@@ -69,8 +76,9 @@ function onRequest(req, res, next) {
     const url = req.originalUrl || req.url;
     const match = url.match(SITE_URL);
     const rest = match ? (match[2] || '') : url;
-    if (rest === '/api/sites' || rest.startsWith('/api/sites?')) {
-        return apiSites(req, res);
+    const api = rest.match(SITES_API);
+    if (api) {
+        return apiSites(req, res, api[1] ? decodeURIComponent(api[1]) : null, api[2]);
     }
     if (!match) {
         return next();
@@ -90,9 +98,27 @@ function onRequest(req, res, next) {
     forward(site, req, res);
 }
 
-function apiSites(req, res) {
+function apiSites(req, res, name, action) {
     const check = settings.secureEnabled ? authJwt.requireAuth : (rq, rs, next) => next();
+    const fail = err => res.status(err.status || 500).json({ error: err.code || 'sites_error', message: err.message || err.toString() });
     check(req, res, () => {
+        if (name) {
+            const site = sites[name];
+            if (!site) {
+                return fail(httpError(404, 'site_not_found', `Le site « ${name} » n'existe pas.`));
+            }
+            let task = null;
+            if (req.method === 'DELETE' && !action) {
+                task = deleteSite(site).then(() => ({ deleted: site.name }));
+            } else if (req.method === 'POST' && action === 'stop') {
+                task = stopSite(site).then(() => siteInfo(site));
+            } else if (req.method === 'POST' && action === 'start') {
+                task = startSite(site).then(() => siteInfo(site));
+            } else if (req.method === 'POST' && action === 'rename') {
+                task = readBody(req).then(body => renameSite(site, body && body.name)).then(renamed => siteInfo(renamed));
+            }
+            return task ? task.then(result => res.json(result)).catch(fail) : res.status(405).end();
+        }
         if (req.method === 'GET') {
             listSites().then(result => res.json(result)).catch(err => res.status(500).json({ error: 'sites_error', message: err.toString() }));
         } else if (req.method === 'POST') {
@@ -124,6 +150,7 @@ function siteInfo(site) {
         port: site.port,
         created: site.created,
         running: !!site.running,
+        stopped: !!site.stopped,
         url: base + '/',
         editorUrl: base + '/editor',
         labUrl: base + '/lab',
@@ -164,13 +191,7 @@ function getPages(site) {
 }
 
 async function createSite(name) {
-    name = (name || '').trim();
-    if (!SITE_NAME.test(name)) {
-        throw httpError(400, 'invalid_name', 'Nom invalide : lettres, chiffres, - et _ (40 caractères au plus), sans espace.');
-    }
-    if (Object.keys(sites).some(key => key.toLowerCase() === name.toLowerCase())) {
-        throw httpError(409, 'site_exists', `Le site « ${name} » existe déjà.`);
-    }
+    name = validateNewName(name);
     const dir = path.join(sitesDir, name);
     fs.mkdirSync(dir, { recursive: true });
     const site = { name, port: await freePort(), created: new Date().toISOString() };
@@ -181,6 +202,113 @@ async function createSite(name) {
     await requestSite(site, 'POST', '/api/project', siteTemplate.create(name, settings.appDir));
     logger.info(`sites: '${name}' created on port ${site.port}`);
     return site;
+}
+
+/** valid name, not used by another site (current: name of the site renamed) */
+function validateNewName(name, current) {
+    name = (name || '').trim();
+    if (!SITE_NAME.test(name)) {
+        throw httpError(400, 'invalid_name', 'Nom invalide : lettres, chiffres, - et _ (40 caractères au plus), sans espace.');
+    }
+    const lower = name.toLowerCase();
+    if (Object.keys(sites).some(key => key !== current && key.toLowerCase() === lower) ||
+        (lower !== (current || '').toLowerCase() && fs.existsSync(path.join(sitesDir, name)))) {
+        throw httpError(409, 'site_exists', `Le site « ${name} » existe déjà.`);
+    }
+    return name;
+}
+
+function writeSiteFile(site) {
+    fs.writeFileSync(path.join(sitesDir, site.name, SITE_FILE),
+        JSON.stringify({ name: site.name, port: site.port, created: site.created, stopped: !!site.stopped }, null, 2));
+}
+
+/** stop the instance of the site (it stays stopped, also after a restart of FUXA) */
+async function stopSite(site) {
+    site.stopped = true;
+    writeSiteFile(site);
+    await stopProcess(site);
+    logger.info(`sites: '${site.name}' stopped`);
+}
+
+async function startSite(site) {
+    site.stopped = false;
+    writeSiteFile(site);
+    if (!isAlive(site.process)) {
+        start(site);
+    }
+    await waitRunning(site);
+}
+
+/** new name: new folder and new address /site/<new name>/ (the instance is restarted) */
+async function renameSite(site, newName) {
+    newName = validateNewName(newName, site.name);
+    if (newName === site.name) {
+        return site;
+    }
+    await stopProcess(site);
+    await moveFolder(path.join(sitesDir, site.name), path.join(sitesDir, newName));
+    delete sites[site.name];
+    logger.info(`sites: '${site.name}' renamed '${newName}'`);
+    site.name = newName;
+    sites[newName] = site;
+    writeSiteFile(site);
+    if (!site.stopped) {
+        start(site);
+        await waitRunning(site);
+    }
+    return site;
+}
+
+/** the folder of the site is moved to sites/_supprimes/<name>_<date> (it can be restored by hand) */
+async function deleteSite(site) {
+    await stopProcess(site);
+    const deletedDir = path.join(sitesDir, DELETED_DIR);
+    if (!fs.existsSync(deletedDir)) {
+        fs.mkdirSync(deletedDir);
+    }
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+    await moveFolder(path.join(sitesDir, site.name), path.join(deletedDir, `${site.name}_${stamp}`));
+    delete sites[site.name];
+    logger.info(`sites: '${site.name}' deleted (moved to ${DELETED_DIR})`);
+}
+
+/** a killed process has a signalCode and no exitCode (Windows too) */
+function isAlive(child) {
+    return !!child && child.exitCode === null && child.signalCode === null;
+}
+
+/** stop the instance and wait its end (its files must be closed before moving the folder) */
+function stopProcess(site) {
+    site.stopping = true;
+    site.running = false;
+    const child = site.process;
+    if (!isAlive(child)) {
+        return Promise.resolve();
+    }
+    return new Promise(resolve => {
+        const timer = setTimeout(resolve, STOP_TIMEOUT);
+        child.once('exit', () => {
+            clearTimeout(timer);
+            resolve();
+        });
+        child.kill();
+    });
+}
+
+/** rename a folder, retried a few times on Windows while the files are still locked */
+async function moveFolder(from, to) {
+    for (let i = 0; ; i++) {
+        try {
+            fs.renameSync(from, to);
+            return;
+        } catch (err) {
+            if (i >= 9) {
+                throw httpError(500, 'move_failed', `Le dossier du site n'a pas pu être déplacé (${err.code || err.message}).`);
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    }
 }
 
 /** start the FUXA instance of the site, restarted if it stops */
@@ -200,6 +328,7 @@ function start(site) {
     });
     site.process = child;
     site.running = false;
+    site.stopping = false;
     fs.closeSync(log);
     waitRunning(site).then(() => logger.info(`sites: '${site.name}' running on port ${site.port}`)).catch(() => {});
     child.on('exit', code => {
@@ -229,7 +358,7 @@ function waitRunning(site) {
                 site.running = true;
                 resolve();
             }).catch(() => {
-                if (Date.now() > end || !site.process || site.process.exitCode !== null) {
+                if (Date.now() > end || !isAlive(site.process)) {
                     reject(httpError(500, 'site_not_started', `Le site « ${site.name} » n'a pas démarré (voir sites/${site.name}/site.log).`));
                 } else {
                     setTimeout(check, 1000);

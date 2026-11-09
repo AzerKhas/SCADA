@@ -6,6 +6,7 @@ import { ToastrService } from 'ngx-toastr';
 import { EndPointApi } from '../../_helpers/endpointapi';
 import { NavigationSettings, View } from '../../_models/hmi';
 import { EditNameComponent, EditNameData } from '../../gui-helpers/edit-name/edit-name.component';
+import { ConfirmDialogComponent, ConfirmDialogData } from '../../gui-helpers/confirm-dialog/confirm-dialog.component';
 import { ProjectService } from '../../_services/project.service';
 import { Chart } from '../../_models/chart';
 import { Device } from '../../_models/device';
@@ -121,6 +122,63 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
             sessionStorage.setItem(EditorSitesListComponent.openViewKey, page.id);
         }
         window.location.href = site.editorUrl;
+    }
+
+    /** stop or start the instance of a site (a stopped site stays stopped after a restart of FUXA) */
+    onStopStartSite(site: SiteInfo, start: boolean) {
+        this.manage(site, 'POST', `/${start ? 'start' : 'stop'}`, null,
+                    start ? 'editor.sites-started' : 'editor.sites-stopped-done');
+    }
+
+    /** new name: new folder and new address of the site */
+    onRenameSite(site: SiteInfo) {
+        const dialogRef = this.dialog.open(EditNameComponent, {
+            disableClose: true,
+            position: { top: '60px' },
+            data: <EditNameData>{
+                title: this.translateService.instant('editor.sites-rename-title', { name: site.name }),
+                label: this.translateService.instant('editor.sites-new-name'),
+                name: site.name,
+                exist: this.sites.filter(s => s.name !== site.name).map(s => s.name),
+                error: this.translateService.instant('editor.sites-new-exists'),
+                validator: (name: string) => EditorSitesListComponent.siteNameRegex.test(name || '')
+            }
+        });
+        dialogRef.afterClosed().subscribe(result => {
+            const name = result?.name?.trim();
+            if (name && name !== site.name) {
+                this.manage(site, 'POST', '/rename', { name }, 'editor.sites-renamed', { name });
+            }
+        });
+    }
+
+    /** the folder of the site is moved to sites/_supprimes (not erased) */
+    onDeleteSite(site: SiteInfo) {
+        const dialogRef = this.dialog.open(ConfirmDialogComponent, {
+            position: { top: '60px' },
+            data: <ConfirmDialogData>{ msg: this.translateService.instant('editor.sites-delete-confirm', { name: site.name }) }
+        });
+        dialogRef.afterClosed().subscribe(result => {
+            if (result) {
+                this.manage(site, 'DELETE', '', null, 'editor.sites-deleted');
+            }
+        });
+    }
+
+    private manage(site: SiteInfo, method: string, action: string, body: any, success: string, params: any = {}) {
+        site.busy = true;
+        const url = `${EndPointApi.getURL()}/api/sites/${encodeURIComponent(site.name)}${action}`;
+        const request = method === 'DELETE' ? this.http.delete(url) : this.http.post(url, body || {});
+        request.subscribe({
+            next: () => {
+                this.toastr.success(this.translateService.instant(success, Object.assign({ site: site.name }, params)));
+                this.load();
+            },
+            error: err => {
+                site.busy = false;
+                this.toastr.error(err?.error?.message || this.translateService.instant('editor.sites-manage-error'));
+            }
+        });
     }
 
     /** page api.html of the site: services of its API (tags, values, history) and test */
@@ -284,6 +342,9 @@ export interface SiteInfo {
     port: number;
     created: string;
     running: boolean;
+    stopped?: boolean;
+    /** an action (stop, start, rename, delete) is running */
+    busy?: boolean;
     url: string;
     editorUrl: string;
     labUrl: string;

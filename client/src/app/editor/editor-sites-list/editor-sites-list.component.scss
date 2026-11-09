@@ -66,6 +66,14 @@
         opacity: 0.55;
     }
 
+    .leftbar-item mat-icon.site-busy {
+        float: left;
+        font-size: 14px;
+        line-height: 20px;
+        margin-left: 4px;
+        opacity: 0.7;
+    }
+
     .site-running {
         background-color: #37BE5F;
     }
