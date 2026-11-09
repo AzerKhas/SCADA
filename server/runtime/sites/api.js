@@ -9,6 +9,9 @@
  *                                     history between from and to (ms or ISO date), default: last 8 hours,
  *                                     tags of the page Courbes if no tags
  * PUT  /api/site/curves               choice of the tags of the page Courbes { curves: [{ tag, label, color, axis }] }
+ * GET  /api/site/history-config       source of the history (FUXA or PostgreSQL), without the password
+ * PUT  /api/site/history-config       save the source of the history
+ * POST /api/site/history-config/test  test a PostgreSQL connection (tables, columns of a table)
  */
 
 'use strict';
@@ -24,7 +27,7 @@ const MAX_POINTS = 20000;
 
 function router(runtime, settings, siteName) {
     const app = express.Router();
-    const source = history.create(runtime, settings.siteHistory);
+    const source = history.create(runtime, settings);
     const authJwt = require('../../api/jwt-helper');
     // with the security enabled, a valid token is needed (header x-access-token)
     app.use((req, res, next) => settings.secureEnabled ? authJwt.requireAuth(req, res, next) : next());
@@ -106,6 +109,31 @@ function router(runtime, settings, siteName) {
      * body: { curves: [{ tag: name or id, label, color, axis: 'gauche' | 'droite' }] }
      * the chart of the page Courbes shows these tags, and the tags are recorded (DAQ) to have their history
      */
+    /** source of the history (FUXA or PostgreSQL), without the password */
+    app.get('/history-config', (req, res) => {
+        res.json(source.getConfig());
+    });
+
+    /** save the source of the history (the PostgreSQL table and columns are checked before) */
+    app.put('/history-config', express.json({ limit: '50kb' }), async (req, res) => {
+        try {
+            const config = await source.setConfig(req.body);
+            require('./files').refresh();
+            res.json(config);
+        } catch (err) {
+            sendError(res, err);
+        }
+    });
+
+    /** test of a PostgreSQL connection: its tables, and the columns of the table if given */
+    app.post('/history-config/test', express.json({ limit: '50kb' }), async (req, res) => {
+        try {
+            res.json(await source.test(req.body));
+        } catch (err) {
+            res.status(400).json({ error: 'connection_failed', message: `Connexion impossible : ${err.message}` });
+        }
+    });
+
     app.put('/curves', express.json({ limit: '200kb' }), async (req, res) => {
         try {
             const list = req.body && Array.isArray(req.body.curves) ? req.body.curves : null;

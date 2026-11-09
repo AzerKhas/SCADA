@@ -158,6 +158,7 @@ ${configurationView.svgcontent || ''}
         ['Fichiers HTML', files.map(f => f.file).concat('configuration.html').join(', ')]
     ])}
 </section>
+${historySection()}
 ${curvesSection(project, views)}
 <section>
   <h2>Connexions (${devices.length})</h2>
@@ -198,6 +199,32 @@ ${listSection('Alarmes', project.alarms, alarm => [alarm.name, tags[alarm.proper
 ${listSection('Scripts', project.scripts, script => [script.name, script.mode || '', (script.parameters || []).map(p => p.name).join(', ')], ['Nom', 'Mode', 'Paramètres'])}
 ${listSection('Graphiques (courbes)', project.charts, chart => [chart.name, (chart.lines || []).map(line => tags[line.id] || line.name || line.id).join(', ')], ['Nom', 'Tags'])}
 ${jsonBlock('fuxa-configuration', { site: siteName, devices: project.devices, hmi: project.hmi, alarms: project.alarms, scripts: project.scripts, charts: project.charts })}`);
+}
+
+/** source of the history (FUXA or PostgreSQL), without the password (history.js, _appdata/history-db.json) */
+function historySection() {
+    let config = { source: 'fuxa' };
+    try {
+        config = JSON.parse(fs.readFileSync(path.join(siteDir, '_appdata', 'history-db.json'), 'utf8'));
+    } catch (err) {
+        // no configuration: history of FUXA
+    }
+    const match = { name: 'nom du tag', address: 'adresse du tag', id: 'identifiant FUXA du tag' };
+    const rows = config.source === 'postgres' ? [
+        ['Source', 'PostgreSQL (lecture seule)'],
+        ['Serveur', `${config.host}:${config.port}${config.ssl ? ' (SSL)' : ''}`],
+        ['Base / utilisateur', `${config.database} / ${config.user}`],
+        ['Table', config.table],
+        ['Colonnes', `tag : ${config.tagColumn}, date/heure : ${config.timeColumn}, valeur : ${config.valueColumn}`],
+        ['Correspondance', `la colonne ${config.tagColumn} contient le ${match[config.tagMatch] || match.name}`],
+        ['Fuseau des dates', config.timeZone === 'UTC' ? 'UTC' : 'heure locale du serveur FUXA'],
+        ['Filtre site', config.siteColumn ? `${config.siteColumn} = ${config.siteValue}` : 'aucun']
+    ] : [['Source', 'FUXA (enregistrement intégré, SQLite)']];
+    return `<section>
+  <h2>Source de l'historique</h2>
+  <p class="info">Données des pages Courbes et Historiques et de l'API. À modifier dans l'éditeur : panneau Sites, menu du site, Base de données (historique).</p>
+  ${table(['Propriété', 'Valeur'], rows)}
+</section>`;
 }
 
 /** choice of the period: dates + quick buttons, calls window.loadData(from, to) */
@@ -584,5 +611,7 @@ function esc(text) {
 }
 
 module.exports = {
-    init: init
+    init: init,
+    /** write the files again (after a change outside of the project, like the source of the history) */
+    refresh: () => runtime && schedule()
 };

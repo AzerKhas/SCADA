@@ -11,6 +11,7 @@ import { ProjectService } from '../../_services/project.service';
 import { Chart } from '../../_models/chart';
 import { Device } from '../../_models/device';
 import { SiteCurvesDialogComponent, SiteCurvesData, SiteCurvesResult } from './site-curves-dialog/site-curves-dialog.component';
+import { HistoryDbConfig, SiteHistoryDialogComponent } from './site-history-dialog/site-history-dialog.component';
 
 /**
  * custom-SCADA: panel "Sites" of the editor
@@ -305,6 +306,20 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
                 this.toastr.warning(this.translateService.instant('editor.sites-curves-no-chart'));
             } else {
                 this.toastr.success(this.translateService.instant('editor.sites-curves-saved', { count: result.lines.length }));
+            }
+        });
+    }
+
+    /** source of the history of the site: FUXA, or a PostgreSQL database (connection, table and columns) */
+    onConfigureHistory(site: SiteInfo) {
+        const dialogRef = this.dialog.open(SiteHistoryDialogComponent, {
+            position: { top: '60px' },
+            data: { site: site.name }
+        });
+        dialogRef.afterClosed().subscribe((config: HistoryDbConfig) => {
+            if (config) {
+                this.toastr.success(this.translateService.instant(config.source === 'postgres' ? 'editor.sites-history-saved-pg' : 'editor.sites-history-saved-fuxa',
+                                                                  { table: config.table }));
             }
         });
     }

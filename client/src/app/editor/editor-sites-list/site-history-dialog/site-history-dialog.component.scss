@@ -1,0 +1,81 @@
+.site-history {
+    width: 760px;
+    max-width: 90vw;
+
+    .help, .info {
+        font-size: 13px;
+        opacity: 0.8;
+        margin-bottom: 10px;
+    }
+
+    .info {
+        font-size: 12px;
+        opacity: 0.65;
+    }
+
+    .sources {
+        display: block;
+        margin-bottom: 10px;
+
+        mat-radio-button {
+            margin-right: 30px;
+        }
+    }
+
+    .group {
+        border: 1px solid rgba(128, 128, 128, 0.5);
+        border-radius: 4px;
+        margin: 0 0 12px 0;
+        padding: 6px 10px 10px 10px;
+
+        legend {
+            font-size: 12px;
+            padding: 0 6px;
+            width: auto;
+        }
+    }
+
+    .row {
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        margin-bottom: 8px;
+    }
+
+    .my-form-field {
+        display: block;
+
+        input, mat-select {
+            width: 100%;
+            box-sizing: border-box;
+        }
+    }
+
+    .grow {
+        flex: 1;
+    }
+
+    .small {
+        width: 90px;
+    }
+
+    .zone {
+        width: 140px;
+    }
+
+    .ssl {
+        margin-bottom: 2px;
+    }
+
+    .message {
+        color: #2e7d32;
+        font-size: 13px;
+        margin-top: 6px;
+    }
+
+    .error {
+        color: #e53935;
+        font-size: 13px;
+        margin-top: 6px;
+    }
+}

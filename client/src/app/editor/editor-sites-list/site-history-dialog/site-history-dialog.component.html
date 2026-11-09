@@ -1,0 +1,126 @@
+<div class="site-history">
+    <h1 mat-dialog-title class="dialog-title" mat-dialog-draggable>{{'editor.sites-history-title' | translate}} - {{data.site}}</h1>
+    <mat-icon (click)="onNoClick()" class="dialog-close-btn">clear</mat-icon>
+    <div mat-dialog-content *ngIf="config">
+        <div class="help">{{'editor.sites-history-help' | translate}}</div>
+        <mat-radio-group [(ngModel)]="config.source" class="sources">
+            <mat-radio-button color="primary" value="fuxa">{{'editor.sites-history-fuxa' | translate}}</mat-radio-button>
+            <mat-radio-button color="primary" value="postgres">PostgreSQL</mat-radio-button>
+        </mat-radio-group>
+
+        <ng-container *ngIf="config.source === 'postgres'">
+            <fieldset class="group">
+                <legend>{{'editor.sites-history-connection' | translate}}</legend>
+                <div class="row">
+                    <div class="my-form-field grow">
+                        <span>{{'editor.sites-history-host' | translate}}</span>
+                        <input [(ngModel)]="config.host" type="text" placeholder="192.168.1.10">
+                    </div>
+                    <div class="my-form-field small">
+                        <span>{{'editor.sites-history-port' | translate}}</span>
+                        <input numberOnly [(ngModel)]="config.port" type="number">
+                    </div>
+                    <div class="my-form-field grow">
+                        <span>{{'editor.sites-history-database' | translate}}</span>
+                        <input [(ngModel)]="config.database" type="text">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="my-form-field grow">
+                        <span>{{'editor.sites-history-user' | translate}}</span>
+                        <input [(ngModel)]="config.user" type="text" autocomplete="off">
+                    </div>
+                    <div class="my-form-field grow">
+                        <span>{{'editor.sites-history-password' | translate}}</span>
+                        <input [(ngModel)]="password" type="password" autocomplete="new-password"
+                               [placeholder]="config.hasPassword ? ('editor.sites-history-password-kept' | translate) : ''">
+                    </div>
+                    <mat-checkbox color="primary" [(ngModel)]="config.ssl" class="ssl">SSL</mat-checkbox>
+                    <button mat-stroked-button (click)="onTest()" [disabled]="testing || !config.host || !config.database || !config.user">
+                        {{(testing ? 'editor.sites-history-testing' : 'editor.sites-history-test') | translate}}
+                    </button>
+                </div>
+            </fieldset>
+
+            <fieldset class="group" *ngIf="tables.length">
+                <legend>{{'editor.sites-history-table-group' | translate}}</legend>
+                <div class="row">
+                    <div class="my-form-field grow">
+                        <span>{{'editor.sites-history-table' | translate}}</span>
+                        <mat-select [(value)]="config.table" (selectionChange)="onTableChange()">
+                            <mat-option *ngFor="let t of tables" [value]="t">{{t}}</mat-option>
+                        </mat-select>
+                    </div>
+                </div>
+                <ng-container *ngIf="columns.length">
+                    <div class="row">
+                        <div class="my-form-field grow">
+                            <span>{{'editor.sites-history-tag-column' | translate}}</span>
+                            <mat-select [(value)]="config.tagColumn">
+                                <mat-option *ngFor="let c of columns" [value]="c.name">{{c.name}} <small>({{c.type}})</small></mat-option>
+                            </mat-select>
+                        </div>
+                        <div class="my-form-field grow">
+                            <span>{{'editor.sites-history-tag-match' | translate}}</span>
+                            <mat-select [(value)]="config.tagMatch">
+                                <mat-option value="name">{{'editor.sites-history-match-name' | translate}}</mat-option>
+                                <mat-option value="address">{{'editor.sites-history-match-address' | translate}}</mat-option>
+                                <mat-option value="id">{{'editor.sites-history-match-id' | translate}}</mat-option>
+                            </mat-select>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="my-form-field grow">
+                            <span>{{'editor.sites-history-time-column' | translate}}</span>
+                            <mat-select [(value)]="config.timeColumn">
+                                <mat-option *ngFor="let c of columns" [value]="c.name">{{c.name}} <small>({{c.type}})</small></mat-option>
+                            </mat-select>
+                        </div>
+                        <div class="my-form-field zone" *ngIf="timeWithoutZone">
+                            <span>{{'editor.sites-history-time-zone' | translate}}</span>
+                            <mat-select [(value)]="config.timeZone">
+                                <mat-option value="local">{{'editor.sites-history-zone-local' | translate}}</mat-option>
+                                <mat-option value="UTC">UTC</mat-option>
+                            </mat-select>
+                        </div>
+                        <div class="my-form-field small" *ngIf="timeIsNumber">
+                            <span>{{'editor.sites-history-time-unit' | translate}}</span>
+                            <mat-select [(value)]="config.timeUnit">
+                                <mat-option value="ms">ms</mat-option>
+                                <mat-option value="s">s</mat-option>
+                            </mat-select>
+                        </div>
+                        <div class="my-form-field grow">
+                            <span>{{'editor.sites-history-value-column' | translate}}</span>
+                            <mat-select [(value)]="config.valueColumn">
+                                <mat-option *ngFor="let c of columns" [value]="c.name">{{c.name}} <small>({{c.type}})</small></mat-option>
+                            </mat-select>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="my-form-field grow">
+                            <span>{{'editor.sites-history-site-column' | translate}}</span>
+                            <mat-select [(value)]="config.siteColumn">
+                                <mat-option value="">{{'editor.sites-history-none' | translate}}</mat-option>
+                                <mat-option *ngFor="let c of columns" [value]="c.name">{{c.name}}</mat-option>
+                            </mat-select>
+                        </div>
+                        <div class="my-form-field grow" *ngIf="config.siteColumn">
+                            <span>{{'editor.sites-history-site-value' | translate}}</span>
+                            <input [(ngModel)]="config.siteValue" type="text" [placeholder]="data.site">
+                        </div>
+                    </div>
+                </ng-container>
+            </fieldset>
+            <div class="info">{{'editor.sites-history-readonly' | translate}}</div>
+        </ng-container>
+        <div class="message" *ngIf="message">{{message}}</div>
+        <div class="error" *ngIf="error">{{error}}</div>
+    </div>
+    <div mat-dialog-content *ngIf="!config && !error">{{'editor.sites-history-loading' | translate}}</div>
+    <div mat-dialog-content *ngIf="!config && error" class="error">{{error}}</div>
+    <div mat-dialog-actions class="dialog-action">
+        <button mat-raised-button (click)="onNoClick()">{{'dlg.cancel' | translate}}</button>
+        <button mat-raised-button color="primary" (click)="onOkClick()" [disabled]="!config || saving">{{'dlg.ok' | translate}}</button>
+    </div>
+</div>
