@@ -15,6 +15,7 @@ const path = require('path');
 const MANIFEST = 'pages.json';
 const CONFIGURATION_VIEW = 'v_site_configuration';
 const CURVES_VIEW = 'v_site_courbes';
+const HISTORY_VIEW = 'v_site_historique';
 /** wait the end of the saves of the editor (one save per view, layout...) before writing */
 const WRITE_DELAY = 1500;
 
@@ -63,6 +64,10 @@ async function writeFiles() {
     const configurationView = views.find(view => view.id === CONFIGURATION_VIEW);
     fs.writeFileSync(path.join(siteDir, 'configuration.html'), configurationHtml(project, configurationView, files));
     files.splice(order(files), 0, { file: 'configuration.html', page: configurationView ? configurationView.name : 'Configuration', viewId: configurationView ? configurationView.id : null });
+    // access to the data of the site (API) for the pages of the folder
+    fs.copyFileSync(path.join(__dirname, 'site-api.client.js'), path.join(siteDir, 'site-api.js'));
+    fs.writeFileSync(path.join(siteDir, 'api.html'), apiHtml());
+    files.push({ file: 'api.html', page: 'API', viewId: null }, { file: 'site-api.js', page: 'API (script)', viewId: null });
 
     // remove the files of the pages deleted or renamed since the last save
     const previous = readManifest();
@@ -108,12 +113,15 @@ function pageHtml(view, project) {
     const tags = tagNames(project);
     const items = Object.values(view.items || {});
     const liveUrl = `/site/${encodeURIComponent(siteName)}/home/${encodeURIComponent(view.name)}`;
+    const live = view.id === CURVES_VIEW ? curvesLive() : view.id === HISTORY_VIEW ? historyLive() : '';
     return document(`${view.name} - ${siteName}`, `
 <header>
   <h1>${esc(view.name)} <small>${esc(siteName)}</small></h1>
   <p class="info">Fichier généré automatiquement à chaque enregistrement de l'éditeur FUXA (${esc(dateText())}).
      Version en direct : <a href="${liveUrl}">${esc(liveUrl)}</a></p>
 </header>
+${live}
+${live ? '<h2>Synoptique de la page (copie de l\'éditeur)</h2>' : ''}
 <section class="synoptic" style="background:${esc(profile.bkcolor || '#ffffff')};width:${Number(profile.width) || 1280}px;height:${Number(profile.height) || 720}px">
 ${view.svgcontent || ''}
 </section>
@@ -190,6 +198,159 @@ ${listSection('Alarmes', project.alarms, alarm => [alarm.name, tags[alarm.proper
 ${listSection('Scripts', project.scripts, script => [script.name, script.mode || '', (script.parameters || []).map(p => p.name).join(', ')], ['Nom', 'Mode', 'Paramètres'])}
 ${listSection('Graphiques (courbes)', project.charts, chart => [chart.name, (chart.lines || []).map(line => tags[line.id] || line.name || line.id).join(', ')], ['Nom', 'Tags'])}
 ${jsonBlock('fuxa-configuration', { site: siteName, devices: project.devices, hmi: project.hmi, alarms: project.alarms, scripts: project.scripts, charts: project.charts })}`);
+}
+
+/** choice of the period: dates + quick buttons, calls window.loadData(from, to) */
+function periodControls() {
+    return `<div class="period">
+  <label>Du <input type="datetime-local" id="from"></label>
+  <label>Au <input type="datetime-local" id="to"></label>
+  <button data-hours="1">1 h</button><button data-hours="8">8 h</button><button data-hours="24">24 h</button><button data-hours="168">7 j</button>
+  <button id="show" class="primary">Afficher</button>
+  <span id="status" class="status"></span>
+</div>
+<script>
+  (function () {
+    var from = document.getElementById('from'), to = document.getElementById('to');
+    function setLast(hours) {
+      var now = Date.now();
+      from.value = SiteApi.inputValue(now - hours * 3600000);
+      to.value = SiteApi.inputValue(now);
+      window.loadData(new Date(from.value), new Date(to.value));
+    }
+    document.querySelectorAll('.period [data-hours]').forEach(function (b) {
+      b.addEventListener('click', function () { setLast(Number(b.getAttribute('data-hours'))); });
+    });
+    document.getElementById('show').addEventListener('click', function () {
+      window.loadData(new Date(from.value), new Date(to.value));
+    });
+    window.addEventListener('load', function () { setLast(8); });
+  })();
+  function setStatus(text, error) {
+    var s = document.getElementById('status');
+    s.textContent = text;
+    s.className = 'status' + (error ? ' error' : '');
+  }
+</script>`;
+}
+
+/** courbes.html: curves of the tags configured for the page Courbes, from the API */
+function curvesLive() {
+    return `<section>
+  <h2>Courbes (données de l'API du site)</h2>
+  ${periodControls()}
+  <div id="legend" class="legend"></div>
+  <canvas id="chart" class="chart"></canvas>
+</section>
+<script src="site-api.js"></script>
+<script>
+  var curves = [];
+  window.loadData = function (from, to) {
+    setStatus('Chargement...');
+    SiteApi.info().then(function (info) {
+      curves = info.curves;
+      if (!curves.length) {
+        throw new Error('Aucun tag choisi : éditeur, panneau Sites, menu du site, Tags des courbes.');
+      }
+      return SiteApi.history({ tags: curves.map(function (c) { return c.tagId; }), from: from, to: to });
+    }).then(function (data) {
+      document.getElementById('legend').innerHTML = data.series.map(function (s) {
+        var c = curves.find(function (x) { return x.tagId === s.id; }) || {};
+        return '<span><i style="background:' + (c.color || '#1565C0') + '"></i>' + (c.label || s.name) + ' (' + (c.axis || 'gauche') + ', ' + s.count + ' valeurs)</span>';
+      }).join('');
+      SiteApi.drawChart(document.getElementById('chart'), data, curves);
+      setStatus(data.series.reduce(function (n, s) { return n + s.count; }, 0) + ' valeurs, source : ' + data.source);
+    }).catch(function (err) { setStatus(err.message, true); });
+  };
+</script>`;
+}
+
+/** historiques.html: table of the history of the tags of the page Courbes, from the API */
+function historyLive() {
+    return `<section>
+  <h2>Historique (données de l'API du site)</h2>
+  ${periodControls()}
+  <p><button id="csv">Exporter en CSV</button></p>
+  <div id="table" class="history"></div>
+</section>
+<script src="site-api.js"></script>
+<script>
+  var last = null;
+  function escapeHtml(t) { return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  window.loadData = function (from, to) {
+    setStatus('Chargement...');
+    var labels = {};
+    SiteApi.info().then(function (info) {
+      info.curves.forEach(function (c) { labels[c.tagId] = c.label; });
+      if (!info.curves.length) {
+        throw new Error('Aucun tag choisi : éditeur, panneau Sites, menu du site, Tags des courbes.');
+      }
+      return SiteApi.history({ tags: info.curves.map(function (c) { return c.tagId; }), from: from, to: to, maxPoints: 5000 });
+    }).then(function (data) {
+      last = SiteApi.historyTable(data, labels);
+      document.getElementById('table').innerHTML = '<table><thead><tr>' + last.head.map(function (h) { return '<th>' + escapeHtml(h) + '</th>'; }).join('') +
+        '</tr></thead><tbody>' + last.rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + escapeHtml(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
+      setStatus(last.rows.length + ' lignes, source : ' + data.source);
+    }).catch(function (err) { setStatus(err.message, true); });
+  };
+  document.getElementById('csv').addEventListener('click', function () {
+    if (!last) { return; }
+    var csv = [last.head].concat(last.rows).map(function (r) { return r.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(';'); }).join('\\r\\n');
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'historique-${esc(siteName)}.csv';
+    a.click();
+  });
+</script>`;
+}
+
+/** api.html: services of the API of the site, with a test of each service */
+function apiHtml() {
+    const base = `/site/${siteName}/api/site`;
+    return document(`API - ${siteName}`, `
+<header>
+  <h1>API du site <small>${esc(siteName)}</small></h1>
+  <p class="info">Services d'accès aux données de ce site (tags, valeurs, historique). Chaque site a sa propre API : elle ne donne que les données du site.
+     Les pages du dossier utilisent le script <a href="site-api.js">site-api.js</a>.</p>
+</header>
+<section>
+  <h2>Services</h2>
+  ${table(['Service', 'Adresse', 'Paramètres', 'Réponse'], [
+        ['Informations', `GET ${base}/info`, '', 'site, tags (nom, connexion, adresse, type, enregistré), curves (tags de la page Courbes), source de l\'historique'],
+        ['Valeurs actuelles', `GET ${base}/values`, 'tags=nom1,nom2 (tous les tags si absent)', 'values : nom, valeur, timestamp'],
+        ['Historique', `GET ${base}/history`, 'tags=nom1,nom2 (tags des courbes si absent)\nfrom, to : ms ou date ISO (8 dernières heures si absent)\nmaxPoints : 2000 par défaut', 'series : nom, count, values [{ t : ms, v : valeur }]']
+    ])}
+</section>
+<section>
+  <h2>Utilisation dans une page HTML du dossier</h2>
+  <pre>&lt;script src="site-api.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  SiteApi.info().then(function (info) { console.log(info.tags, info.curves); });
+  SiteApi.values(['reservoir_niveau']).then(function (r) { console.log(r.values); });
+  SiteApi.history({ tags: ['reservoir_niveau'], from: new Date(Date.now() - 3600000), to: new Date() })
+    .then(function (r) { console.log(r.series); });
+&lt;/script&gt;</pre>
+</section>
+<section>
+  <h2>Tester</h2>
+  <div class="period">
+    <select id="service"><option value="/info">info</option><option value="/values">values</option><option value="/history">history</option></select>
+    <input id="params" placeholder="tags=reservoir_niveau&amp;from=..." size="60">
+    <button id="run" class="primary">Envoyer</button>
+  </div>
+  <pre id="result">Résultat...</pre>
+</section>
+<script src="site-api.js"></script>
+<script>
+  document.getElementById('run').addEventListener('click', function () {
+    var url = SiteApi.base + document.getElementById('service').value;
+    var params = document.getElementById('params').value.trim();
+    document.getElementById('result').textContent = 'GET ' + url + (params ? '?' + params : '') + ' ...';
+    fetch(url + (params ? '?' + params : '')).then(function (r) { return r.json(); }).then(function (body) {
+      document.getElementById('result').textContent = JSON.stringify(body, null, 2);
+    }).catch(function (err) { document.getElementById('result').textContent = err.message; });
+  });
+</script>`);
 }
 
 /** tags chosen for the page Courbes (lines of the chart shown by the page) */
@@ -317,6 +478,14 @@ function document(title, body) {
   td { border: 1px solid #ccc; padding: 4px 8px; vertical-align: top; }
   .empty { color: #888; font-style: italic; }
   details { margin-top: 24px; } pre { background: #fff; border: 1px solid #ccc; padding: 10px; overflow: auto; max-height: 400px; font-size: 12px; }
+  .period { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+  .period input, .period select { padding: 4px; } .period button, button { padding: 5px 12px; cursor: pointer; }
+  button.primary { background: #1e88e5; color: #fff; border: none; border-radius: 3px; }
+  .status { font-size: 13px; color: #555; } .status.error { color: #c62828; font-weight: bold; }
+  .chart { width: 100%; height: 420px; background: #fff; border: 1px solid #ccc; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 6px 0; font-size: 13px; }
+  .legend i { display: inline-block; width: 22px; height: 4px; margin-right: 6px; vertical-align: middle; }
+  .history { max-height: 520px; overflow: auto; }
 </style>
 </head>
 <body>

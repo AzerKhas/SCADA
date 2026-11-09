@@ -584,6 +584,7 @@
     "editor.sites-curves-chart-name": "Courbes du site",
     "editor.sites-curves-saved": "Page Courbes : {{count}} tag(s)",
     "editor.sites-curves-no-chart": "Enregistré, mais la page Courbes n'a pas de graphique relié à ces courbes",
+    "editor.sites-open-api": "API du site (api.html)",
     "editor.views": "Vues",
     "editor.resources": "Ressources",
     "editor.view-delete": "Effacer",

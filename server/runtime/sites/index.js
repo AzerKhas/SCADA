@@ -19,8 +19,8 @@ const siteTemplate = require('./template');
 const SITE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
 const SITE_URL = /^\/site\/([^/?#]+)(\/.*)?$/;
 const SITE_FILE = 'site.json';
-/** HTML files of a site written by its instance (files.js): /site/<name>/fichiers/accueil.html */
-const FILE_URL = /^\/fichiers\/([a-z0-9-]+\.html)(\?.*)?$/;
+/** files of a site written by its instance (files.js): /site/<name>/fichiers/accueil.html, site-api.js */
+const FILE_URL = /^\/fichiers\/([a-z0-9-]+\.(?:html|js))(\?.*)?$/;
 const PAGES_FILE = 'pages.json';
 /** time to wait for a new instance before sending its first project */
 const START_TIMEOUT = 60000;
@@ -146,7 +146,7 @@ function sendSiteFile(site, file, res) {
     if (!siteFiles(site).some(f => f.file === file)) {
         return sendPage(res, 404, 'Fichier introuvable', `Le fichier « ${escapeHtml(file)} » n'existe pas dans le site « ${escapeHtml(site.name)} ».`);
     }
-    res.type('html').sendFile(path.join(sitesDir, site.name, file));
+    res.type(file.endsWith('.js') ? 'application/javascript' : 'html').sendFile(path.join(sitesDir, site.name, file));
 }
 
 /** views of the project of the site (pages shown under the site in the editor) */

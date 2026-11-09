@@ -16,6 +16,7 @@
                 <button mat-menu-item (click)="addPage.emit()" *ngIf="site.name === currentSite">{{'editor.sites-add-page' | translate}}</button>
                 <button mat-menu-item (click)="onConfigureCurves(site)" *ngIf="site.name === currentSite">{{'editor.sites-curves-menu' | translate}}</button>
                 <button mat-menu-item (click)="onOpenSupervision(site)">{{'editor.sites-open-supervision' | translate}}</button>
+                <button mat-menu-item (click)="onOpenApi(site)">{{'editor.sites-open-api' | translate}}</button>
             </mat-menu>
         </div>
         <ng-container *ngIf="expanded[site.name]">

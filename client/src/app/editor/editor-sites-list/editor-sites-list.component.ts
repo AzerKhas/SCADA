@@ -123,6 +123,11 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
         window.location.href = site.editorUrl;
     }
 
+    /** page api.html of the site: services of its API (tags, values, history) and test */
+    onOpenApi(site: SiteInfo) {
+        window.open(`/site/${encodeURIComponent(site.name)}/fichiers/api.html`, '_blank');
+    }
+
     /** supervision of the site (operator view) in a new tab */
     onOpenSupervision(site: SiteInfo) {
         window.open(site.url, '_blank');

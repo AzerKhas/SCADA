@@ -465,6 +465,9 @@ app.use(allowCrossDomain);
 // custom-SCADA: multi-sites (/site/<name>/ and /api/sites), only in the main FUXA, not in the instances of the sites
 if (!process.env.FUXA_SITE) {
     require('./runtime/sites').init(app, server, settings, logger);
+} else {
+    // instance of a site: API of the site (tags, values, history) under /site/<name>/api/site
+    app.use(BASE_PATH + '/api/site', require('./runtime/sites/api').router(runtime, settings, process.env.FUXA_SITE));
 }
 
 if (indexHtmlCache) {
