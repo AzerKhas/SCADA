@@ -70,7 +70,10 @@
                         <app-editor-sites-list #sitesList
                                                [views]="hmi?.views"
                                                [selectedViewId]="currentView?.id"
-                                               (selectPage)="onSelectSitePage($event)">
+                                               [navigation]="hmi?.layout?.navigation"
+                                               (selectPage)="onSelectSitePage($event)"
+                                               (addPage)="onAddDoc(true)"
+                                               (toggleMenu)="onToggleSitePageMenu($event)">
                         </app-editor-sites-list>
                     </div>
                 </mat-expansion-panel>

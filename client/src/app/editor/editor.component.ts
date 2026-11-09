@@ -7,7 +7,7 @@ import { Subject, Subscription, switchMap, takeUntil } from 'rxjs';
 import { TranslateService } from '@ngx-translate/core';
 
 import { ProjectService, SaveMode } from '../_services/project.service';
-import { Hmi, View, GaugeSettings, SelElement, LayoutSettings, ViewType, ISvgElement, GaugeProperty, DocProfile } from '../_models/hmi';
+import { Hmi, View, GaugeSettings, SelElement, LayoutSettings, ViewType, ISvgElement, GaugeProperty, DocProfile, NaviItem } from '../_models/hmi';
 import { WindowRef } from '../_helpers/windowref';
 import { GaugePropertyComponent, GaugeDialogType, GaugePropertyData } from '../gauges/gauge-property/gauge-property.component';
 import { ShapeStyleHelper } from '../gauges/gauge-property/custom-tabs/shape-style.helper';
@@ -1069,7 +1069,10 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
     //#endregion
 
     //#region View Events (Add/Rename/Delete/...)
-    onAddDoc() {
+    /**
+     * @param addToMenu custom-SCADA: new page of a site, also added to the menu of the site
+     */
+    onAddDoc(addToMenu = false) {
         let dialogRef = this.dialog.open(ViewPropertyComponent, {
             position: { top: '60px' },
             data: <ViewPropertyType & { newView: boolean}> {
@@ -1088,8 +1091,39 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
                 this.hmi.views.push(view);
                 this.onSelectView(view);
                 this.saveView(this.currentView);
+                if (addToMenu) {
+                    this.setViewInMenu(view, true);
+                }
             }
         });
+    }
+
+    /** custom-SCADA: add or remove the page of the site in its menu (panel "Sites") */
+    onToggleSitePageMenu(viewId: string) {
+        const view = this.hmi?.views?.find(v => v.id === viewId);
+        if (view) {
+            this.setViewInMenu(view, !(this.hmi.layout?.navigation?.items || []).some(item => item.view === view.id));
+        }
+    }
+
+    private setViewInMenu(view: View, inMenu: boolean) {
+        const layout = this.hmi.layout;
+        if (!layout?.navigation) {
+            return;
+        }
+        const items = layout.navigation.items = layout.navigation.items || [];
+        if (inMenu) {
+            const item = <NaviItem>{
+                id: Utils.getShortGUID('n_'), text: view.name, link: '', view: view.id,
+                icon: 'description', image: '', permission: null, permissionRoles: null
+            };
+            // before the system pages ([alarms], [home]...) at the end of the menu
+            const index = items.findIndex(i => i.view?.startsWith('['));
+            items.splice(index < 0 ? items.length : index, 0, item);
+        } else {
+            layout.navigation.items = items.filter(i => i.view !== view.id);
+        }
+        this.projectService.setLayout(layout);
     }
 
     /**

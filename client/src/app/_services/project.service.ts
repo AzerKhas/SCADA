@@ -505,6 +505,12 @@ export class ProjectService {
                 break;
             }
         }
+        // custom-SCADA: the menu entries of the deleted page are removed too
+        const navigation = this.projectData.hmi.layout?.navigation;
+        if (navigation?.items?.some(item => item.view === view.id)) {
+            navigation.items = navigation.items.filter(item => item.view !== view.id);
+            this.saveLayout();
+        }
         this.storage.setServerProjectData(ProjectDataCmdType.DelView, view, this.projectData).subscribe(result => {
         }, err => {
             console.error(err);

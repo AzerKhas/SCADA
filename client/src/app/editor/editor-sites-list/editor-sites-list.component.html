@@ -13,16 +13,26 @@
                   matTooltip="{{(site.running ? 'editor.sites-running' : 'editor.sites-stopped') | translate}}"></span>
             <mat-menu #menusite="matMenu" class="leftbar-item-menu">
                 <button mat-menu-item (click)="onOpenPage(site)" [disabled]="site.name === currentSite">{{'editor.sites-open-editor' | translate}}</button>
+                <button mat-menu-item (click)="addPage.emit()" *ngIf="site.name === currentSite">{{'editor.sites-add-page' | translate}}</button>
                 <button mat-menu-item (click)="onOpenSupervision(site)">{{'editor.sites-open-supervision' | translate}}</button>
             </mat-menu>
         </div>
         <ng-container *ngIf="expanded[site.name]">
-            <div *ngFor="let page of site.pages" class="leftbar-item pointer site-page"
+            <div *ngFor="let page of getPages(site); trackBy: trackPage" class="leftbar-item pointer site-page"
                  [class.leftbar-item-active]="isCurrentPage(site, page)" (click)="onOpenPage(site, page)">
                 <mat-icon class="leftbar-item-type item-icon-page">description</mat-icon>
                 <span class="site-name">{{page.name}}</span>
+                <ng-container *ngIf="site.name === currentSite">
+                    <mat-icon aria-label="More" [matMenuTriggerFor]="menupage" (click)="$event.stopPropagation()">more_vert</mat-icon>
+                    <mat-icon *ngIf="isInMenu(page)" class="page-in-menu" matTooltip="{{'editor.sites-page-in-menu' | translate}}">menu</mat-icon>
+                    <mat-menu #menupage="matMenu" class="leftbar-item-menu">
+                        <button mat-menu-item (click)="toggleMenu.emit(page.id)">
+                            {{(isInMenu(page) ? 'editor.sites-menu-remove' : 'editor.sites-menu-add') | translate}}
+                        </button>
+                    </mat-menu>
+                </ng-container>
             </div>
-            <div *ngIf="!site.pages?.length" class="site-page site-empty">
+            <div *ngIf="!getPages(site).length" class="site-page site-empty">
                 {{(site.running ? 'editor.sites-no-page' : 'editor.sites-stopped') | translate}}
             </div>
         </ng-container>

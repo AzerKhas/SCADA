@@ -128,7 +128,13 @@ function siteInfo(site) {
 function getPages(site) {
     return requestSite(site, 'GET', '/api/project').then(project => {
         const views = (project && project.hmi && project.hmi.views) || [];
-        return views.map(view => ({ id: view.id, name: view.name }));
+        // in the order of the menu of the site, then the pages that are not in the menu
+        const items = (project.hmi.layout && project.hmi.layout.navigation && project.hmi.layout.navigation.items) || [];
+        const menu = items.map(item => item.view);
+        const rank = id => menu.indexOf(id) < 0 ? menu.length : menu.indexOf(id);
+        return views.map((view, index) => ({ id: view.id, name: view.name, index }))
+            .sort((a, b) => rank(a.id) - rank(b.id) || a.index - b.index)
+            .map(page => ({ id: page.id, name: page.name }));
     });
 }
 

@@ -4,7 +4,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { TranslateService } from '@ngx-translate/core';
 import { ToastrService } from 'ngx-toastr';
 import { EndPointApi } from '../../_helpers/endpointapi';
-import { View } from '../../_models/hmi';
+import { NavigationSettings, View } from '../../_models/hmi';
 import { EditNameComponent, EditNameData } from '../../gui-helpers/edit-name/edit-name.component';
 
 /**
@@ -21,7 +21,11 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
     /** pages of the project open in the editor, to open the page asked before the change of site */
     @Input() views: View[];
     @Input() selectedViewId: string;
+    /** menu of the project open in the editor (pages shown in the menu of the site) */
+    @Input() navigation: NavigationSettings;
     @Output() selectPage = new EventEmitter<string>();
+    @Output() addPage = new EventEmitter<void>();
+    @Output() toggleMenu = new EventEmitter<string>();
 
     private static readonly openViewKey = 'custom-scada.sites.open-view';
     private static readonly siteNameRegex = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
@@ -148,6 +152,27 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
                 this.toastr.error(err?.error?.message || this.translateService.instant('editor.sites-create-error'));
             }
         });
+    }
+
+    /** pages of a site: the pages of the project open in the editor for the current site (always up to date) */
+    getPages(site: SiteInfo): SitePage[] {
+        if (site.name === this.currentSite && this.views) {
+            // in the order of the menu, then the pages that are not in the menu
+            const menu = (this.navigation?.items || []).map(item => item.view);
+            const rank = (id: string) => menu.indexOf(id) < 0 ? menu.length : menu.indexOf(id);
+            return this.views.map((view, index) => ({ id: view.id, name: view.name, index }))
+                .sort((a, b) => rank(a.id) - rank(b.id) || a.index - b.index)
+                .map(page => ({ id: page.id, name: page.name }));
+        }
+        return site.pages || [];
+    }
+
+    trackPage(index: number, page: SitePage) {
+        return page.id;
+    }
+
+    isInMenu(page: SitePage): boolean {
+        return (this.navigation?.items || []).some(item => item.view === page.id);
     }
 
     isCurrentPage(site: SiteInfo, page: SitePage): boolean {
