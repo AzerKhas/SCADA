@@ -50,6 +50,30 @@
         <!-- LEFT BAR -->
         <mat-drawer mode="side" opened="true" class="svg-sidenav leave-header-area" disableClose>
             <mat-accordion multi="true">
+                <!-- custom-SCADA: sites (one FUXA project per site) -->
+                <mat-expansion-panel class="svg-workarea-leftbar-p" (opened)="panelsState.panelSites=true;savePanelState()" (closed)="panelsState.panelSites=false;savePanelState()"
+                    hideToggle="true" [expanded]="panelsState.panelSites">
+                    <mat-expansion-panel-header class="svg-workarea-leftbar-h">
+                        <mat-panel-title>
+                            <mat-icon aria-label="Select" *ngIf="panelsState.panelSites">expand_less</mat-icon>
+                            <mat-icon aria-label="Select" *ngIf="!panelsState.panelSites">expand_more</mat-icon>
+                            <span>{{'editor.sites' | translate}}</span>
+                        </mat-panel-title>
+                        <mat-icon aria-label="Add" matTooltip="{{'editor.sites-add' | translate}}" *ngIf="panelsState.panelSites" class="leftbar-edit-btn"
+                            (click)="sitesList.onAddSite();$event.stopPropagation()">create_new_folder
+                        </mat-icon>
+                        <mat-icon aria-label="Refresh" matTooltip="{{'editor.sites-refresh' | translate}}" *ngIf="panelsState.panelSites" class="leftbar-edit-btn"
+                            (click)="sitesList.load();$event.stopPropagation()">refresh
+                        </mat-icon>
+                    </mat-expansion-panel-header>
+                    <div class="leftbar-panel view-panel sites-panel">
+                        <app-editor-sites-list #sitesList
+                                               [views]="hmi?.views"
+                                               [selectedViewId]="currentView?.id"
+                                               (selectPage)="onSelectSitePage($event)">
+                        </app-editor-sites-list>
+                    </div>
+                </mat-expansion-panel>
                 <mat-expansion-panel class="svg-workarea-leftbar-p" (opened)="panelsState.panelView=true;savePanelState()" (closed)="panelsState.panelView=false;savePanelState()"
                     hideToggle="true" [expanded]="panelsState.panelView">
                     <mat-expansion-panel-header class="svg-workarea-leftbar-h">

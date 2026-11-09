@@ -98,6 +98,7 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
     selectedElement: SelElement = new SelElement();
     panelsState: PanelsStateType = {
         enabled: false,
+        panelSites: true,
         panelView: true,
         panelViewHeight: 200,
         panelGeneral: true,
@@ -1167,6 +1168,14 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
      * select the view, save current vieww before
      * @param view selected view to load resource
      */
+    /** custom-SCADA: page of the site chosen in the panel "Sites" */
+    onSelectSitePage(viewId: string) {
+        const view = this.hmi?.views?.find(v => v.id === viewId);
+        if (view) {
+            this.onSelectView(view, false);
+        }
+    }
+
     onSelectView(view: View, force = true) {
         if (!force && this.currentView?.id === view?.id) {
             return;
@@ -1775,6 +1784,7 @@ export enum EditorModeType {
 
 interface PanelsStateType {
     enabled?: boolean;
+    panelSites?: boolean;
     panelView?: boolean;
     panelViewHeight?: number;
     panelGeneral?: boolean;

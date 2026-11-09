@@ -1,0 +1,33 @@
+<div class="sites-list">
+    <div class="leftbar-item pointer" [class.leftbar-item-active]="!currentSite" (click)="onOpenMain()"
+         matTooltip="{{'editor.sites-main-tooltip' | translate}}">
+        <mat-icon class="leftbar-item-type item-icon-main">home_work</mat-icon>
+        <span class="site-name">{{'editor.sites-main' | translate}}</span>
+    </div>
+    <ng-container *ngFor="let site of sites">
+        <div class="leftbar-item pointer" [class.site-current]="site.name === currentSite" (click)="onToggle(site)">
+            <mat-icon class="leftbar-item-type item-icon-folder">{{expanded[site.name] ? 'folder_open' : 'folder'}}</mat-icon>
+            <span class="site-name">{{site.name}}</span>
+            <mat-icon aria-label="More" [matMenuTriggerFor]="menusite" (click)="$event.stopPropagation()">more_vert</mat-icon>
+            <span class="site-state" [class.site-running]="site.running"
+                  matTooltip="{{(site.running ? 'editor.sites-running' : 'editor.sites-stopped') | translate}}"></span>
+            <mat-menu #menusite="matMenu" class="leftbar-item-menu">
+                <button mat-menu-item (click)="onOpenPage(site)" [disabled]="site.name === currentSite">{{'editor.sites-open-editor' | translate}}</button>
+                <button mat-menu-item (click)="onOpenSupervision(site)">{{'editor.sites-open-supervision' | translate}}</button>
+            </mat-menu>
+        </div>
+        <ng-container *ngIf="expanded[site.name]">
+            <div *ngFor="let page of site.pages" class="leftbar-item pointer site-page"
+                 [class.leftbar-item-active]="isCurrentPage(site, page)" (click)="onOpenPage(site, page)">
+                <mat-icon class="leftbar-item-type item-icon-page">description</mat-icon>
+                <span class="site-name">{{page.name}}</span>
+            </div>
+            <div *ngIf="!site.pages?.length" class="site-page site-empty">
+                {{(site.running ? 'editor.sites-no-page' : 'editor.sites-stopped') | translate}}
+            </div>
+        </ng-container>
+    </ng-container>
+    <div *ngIf="!loading && !sites.length && !error" class="site-empty">{{'editor.sites-empty' | translate}}</div>
+    <div *ngIf="error" class="site-empty site-error">{{error | translate}}</div>
+    <div *ngIf="creating" class="site-empty">{{'editor.sites-creating' | translate}}</div>
+</div>

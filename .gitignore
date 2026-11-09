@@ -85,6 +85,7 @@ _certificates/
 
 # appdata
 server/_appdata
+server/sites/
 #server/package-lock.json
 #client/package-lock.json
 

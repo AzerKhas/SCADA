@@ -341,6 +341,11 @@
     overflow: auto;
     cursor: s-resize;
 }
+/* custom-SCADA: panel Sites */
+.sites-panel {
+    max-height: 260px;
+    cursor: default;
+}
 .leftbar-edit-btn {
     margin-top: 2px;
     font-size: 18px;

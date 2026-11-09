@@ -105,7 +105,8 @@ try {
 
     settings.workDir = workDir;
     settings.appDir = __dirname;
-    settings.packageDir = path.resolve(rootDir, '_pkg');
+    // custom-SCADA: the instances of the sites use the plugins of the main FUXA
+    settings.packageDir = process.env.FUXA_PACKAGE_DIR || path.resolve(rootDir, '_pkg');
     settings.settingsFile = settingsFile;
     settings.environment = process.env.NODE_ENV || 'prod';
     settings.uploadFileDir = '_upload_files';
@@ -456,6 +457,11 @@ const SHELL_ROUTES = [
 ];
 
 app.use(allowCrossDomain);
+
+// custom-SCADA: multi-sites (/site/<name>/ and /api/sites), only in the main FUXA, not in the instances of the sites
+if (!process.env.FUXA_SITE) {
+    require('./runtime/sites').init(app, server, settings, logger);
+}
 
 if (indexHtmlCache) {
     const serveShell = (req, res) => res.type('html').send(indexHtmlCache);
