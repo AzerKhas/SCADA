@@ -27,6 +27,9 @@ function create(name, appDir) {
         history.name = 'Historiques';
     }
     const charts = views.find(view => view.id === 'v_site_courbes');
+    if (charts) {
+        simplifyCurvesView(charts);
+    }
     views.push(configurationView(name, charts || views[0]));
     // order of the pages in the editor: Accueil, Courbes, Configuration, Historiques
     const order = ['v_site_accueil', 'v_site_courbes', 'v_site_configuration', 'v_site_historique'];
@@ -43,6 +46,25 @@ function create(name, appDir) {
     ];
     project.hmi.layout.start = 'v_site_accueil';
     return project;
+}
+
+/**
+ * page Courbes: the period is chosen with the calendar of the chart (its toolbar),
+ * so the date fields and the button of the template (without action) are removed
+ */
+function simplifyCurvesView(view) {
+    const removed = Object.values(view.items || {}).filter(item =>
+        ['courbes_date_debut', 'courbes_date_fin', 'courbes_btn_afficher'].includes(item.name));
+    let svg = view.svgcontent || '';
+    removed.forEach(item => {
+        delete view.items[item.id];
+        // the group of these objects has no inner group
+        svg = svg.replace(new RegExp(`\\s*<g [^>]*id="${item.id}"[^>]*>[\\s\\S]*?</g>`), '');
+    });
+    svg = svg.replace(/\s*<text [^>]*id="svg_courbes_(du|au)"[^>]*>[^<]*<\/text>/g, '');
+    svg = svg.replace(/(<text [^>]*id="svg_courbes_note"[^>]*>)[^<]*(<\/text>)/,
+        '$1Période : calendrier du graphique (horloge). Tags des courbes : éditeur, panneau Sites, menu du site, Tags des courbes.$2');
+    view.svgcontent = svg;
 }
 
 /** page Configuration (its content is made in a next step) */

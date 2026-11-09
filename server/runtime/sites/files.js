@@ -14,6 +14,7 @@ const path = require('path');
 
 const MANIFEST = 'pages.json';
 const CONFIGURATION_VIEW = 'v_site_configuration';
+const CURVES_VIEW = 'v_site_courbes';
 /** wait the end of the saves of the editor (one save per view, layout...) before writing */
 const WRITE_DELAY = 1500;
 
@@ -149,6 +150,7 @@ ${configurationView.svgcontent || ''}
         ['Fichiers HTML', files.map(f => f.file).concat('configuration.html').join(', ')]
     ])}
 </section>
+${curvesSection(project, views)}
 <section>
   <h2>Connexions (${devices.length})</h2>
   ${table(['Nom', 'Type', 'Activée', 'Polling (ms)', 'Paramètres'], devices.map(device => [
@@ -188,6 +190,26 @@ ${listSection('Alarmes', project.alarms, alarm => [alarm.name, tags[alarm.proper
 ${listSection('Scripts', project.scripts, script => [script.name, script.mode || '', (script.parameters || []).map(p => p.name).join(', ')], ['Nom', 'Mode', 'Paramètres'])}
 ${listSection('Graphiques (courbes)', project.charts, chart => [chart.name, (chart.lines || []).map(line => tags[line.id] || line.name || line.id).join(', ')], ['Nom', 'Tags'])}
 ${jsonBlock('fuxa-configuration', { site: siteName, devices: project.devices, hmi: project.hmi, alarms: project.alarms, scripts: project.scripts, charts: project.charts })}`);
+}
+
+/** tags chosen for the page Courbes (lines of the chart shown by the page) */
+function curvesSection(project, views) {
+    const curvesView = views.find(view => view.id === CURVES_VIEW);
+    const chartItem = Object.values((curvesView && curvesView.items) || {}).find(item => item.type === 'svg-ext-html_chart' && item.property && item.property.id);
+    const chart = chartItem ? (project.charts || []).find(c => c.id === chartItem.property.id) : null;
+    const allTags = {};
+    Object.values(project.devices || {}).forEach(device => Object.values(device.tags || {}).forEach(tag => allTags[tag.id] = { device, tag }));
+    const lines = (chart && chart.lines) || [];
+    return `<section>
+  <h2>Tags des courbes (page Courbes)</h2>
+  <p class="info">Tags affichés par le graphique de la page Courbes. La période est choisie avec le calendrier du graphique.</p>
+  ${table(['Libellé', 'Tag', 'Connexion', 'Couleur', 'Axe', 'Enregistré (historique)'], lines.map(line => {
+        const found = allTags[line.id];
+        return [line.label || line.name, found ? found.tag.name : line.name || line.id, found ? found.device.name : line.device || '',
+            line.color || '', Number(line.yaxis) === 2 ? 'droite' : 'gauche',
+            found && found.tag.daq && found.tag.daq.enabled ? `oui (${found.tag.daq.interval || ''} s)` : 'non'];
+    }))}
+</section>`;
 }
 
 function itemsTable(items, tags) {

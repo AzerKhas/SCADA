@@ -1,0 +1,52 @@
+<div class="site-curves">
+    <h1 mat-dialog-title class="dialog-title" mat-dialog-draggable>{{'editor.sites-curves-title' | translate}} - {{data.site}}</h1>
+    <mat-icon (click)="onNoClick()" class="dialog-close-btn">clear</mat-icon>
+    <div mat-dialog-content>
+        <div class="help">{{'editor.sites-curves-help' | translate}}</div>
+        <div class="my-form-field filter">
+            <span>{{'editor.sites-curves-filter' | translate}}</span>
+            <input [(ngModel)]="filter" type="text">
+        </div>
+        <div class="table">
+            <div class="row header">
+                <span class="c-check"></span>
+                <span class="c-tag">{{'editor.sites-curves-tag' | translate}}</span>
+                <span class="c-device">{{'editor.sites-curves-device' | translate}}</span>
+                <span class="c-label">{{'editor.sites-curves-label' | translate}}</span>
+                <span class="c-color">{{'editor.sites-curves-color' | translate}}</span>
+                <span class="c-axis">{{'editor.sites-curves-axis' | translate}}</span>
+            </div>
+            <div class="rows">
+                <div class="row" *ngFor="let row of visibleRows" [class.selected]="row.selected">
+                    <span class="c-check">
+                        <mat-checkbox color="primary" [(ngModel)]="row.selected" (change)="onToggle(row)"></mat-checkbox>
+                    </span>
+                    <span class="c-tag" [matTooltip]="row.address">
+                        {{row.tagName}}
+                        <mat-icon *ngIf="row.recorded" class="recorded" matTooltip="{{'editor.sites-curves-recorded' | translate}}">history</mat-icon>
+                    </span>
+                    <span class="c-device">{{row.deviceName}}</span>
+                    <span class="c-label"><input [(ngModel)]="row.label" type="text" [disabled]="!row.selected"></span>
+                    <span class="c-color">
+                        <input class="color-box" [(colorPicker)]="row.color" [style.background]="row.color" [disabled]="!row.selected"
+                               [cpPresetColors]="defaultColors" [cpOKButton]="true" [cpCancelButton]="true" cpPosition="left" readonly>
+                    </span>
+                    <span class="c-axis">
+                        <mat-select [(value)]="row.yaxis" [disabled]="!row.selected">
+                            <mat-option [value]="1">{{'editor.sites-curves-axis-left' | translate}}</mat-option>
+                            <mat-option [value]="2">{{'editor.sites-curves-axis-right' | translate}}</mat-option>
+                        </mat-select>
+                    </span>
+                </div>
+                <div *ngIf="!visibleRows.length" class="empty">{{'editor.sites-curves-no-tag' | translate}}</div>
+            </div>
+        </div>
+        <div class="footer-info">
+            {{'editor.sites-curves-selected' | translate: { count: selectedCount } }} · {{'editor.sites-curves-daq-info' | translate}}
+        </div>
+    </div>
+    <div mat-dialog-actions class="dialog-action">
+        <button mat-raised-button (click)="onNoClick()">{{'dlg.cancel' | translate}}</button>
+        <button mat-raised-button color="primary" (click)="onOkClick()">{{'dlg.ok' | translate}}</button>
+    </div>
+</div>

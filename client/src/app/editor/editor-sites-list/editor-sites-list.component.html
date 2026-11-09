@@ -14,6 +14,7 @@
             <mat-menu #menusite="matMenu" class="leftbar-item-menu">
                 <button mat-menu-item (click)="onOpenPage(site)" [disabled]="site.name === currentSite">{{'editor.sites-open-editor' | translate}}</button>
                 <button mat-menu-item (click)="addPage.emit()" *ngIf="site.name === currentSite">{{'editor.sites-add-page' | translate}}</button>
+                <button mat-menu-item (click)="onConfigureCurves(site)" *ngIf="site.name === currentSite">{{'editor.sites-curves-menu' | translate}}</button>
                 <button mat-menu-item (click)="onOpenSupervision(site)">{{'editor.sites-open-supervision' | translate}}</button>
             </mat-menu>
         </div>

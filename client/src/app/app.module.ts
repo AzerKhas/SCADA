@@ -202,6 +202,7 @@ import { ViewPropertyComponent } from './editor/view-property/view-property.comp
 import { ResizeDirective } from './_directives/resize.directive';
 import { EditorViewsListComponent } from './editor/editor-views-list/editor-views-list.component';
 import { EditorSitesListComponent } from './editor/editor-sites-list/editor-sites-list.component';
+import { SiteCurvesDialogComponent } from './editor/editor-sites-list/site-curves-dialog/site-curves-dialog.component';
 import { SvgUtils } from './_helpers/svg-utils';
 import { FlexWidgetPropertyComponent } from './gauges/gauge-property/flex-widget-property/flex-widget-property.component';
 import { GraphSourceEditComponent } from './editor/graph-config/graph-source-edit/graph-source-edit.component';
@@ -430,6 +431,7 @@ export const myCustomTooltipDefaults: MatTooltipDefaultOptions = {
         ResizeDirective,
         EditorViewsListComponent,
         EditorSitesListComponent,
+        SiteCurvesDialogComponent,
         MapsLocationListComponent,
         MapsLocationPropertyComponent,
         MapsViewComponent,

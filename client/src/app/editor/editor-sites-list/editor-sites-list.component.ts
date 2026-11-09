@@ -6,6 +6,10 @@ import { ToastrService } from 'ngx-toastr';
 import { EndPointApi } from '../../_helpers/endpointapi';
 import { NavigationSettings, View } from '../../_models/hmi';
 import { EditNameComponent, EditNameData } from '../../gui-helpers/edit-name/edit-name.component';
+import { ProjectService } from '../../_services/project.service';
+import { Chart } from '../../_models/chart';
+import { Device } from '../../_models/device';
+import { SiteCurvesDialogComponent, SiteCurvesData, SiteCurvesResult } from './site-curves-dialog/site-curves-dialog.component';
 
 /**
  * custom-SCADA: panel "Sites" of the editor
@@ -31,6 +35,9 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
     private static readonly siteNameRegex = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
     /** page Configuration of a new site: its file is configuration.html (with all the properties of the site) */
     private static readonly configurationViewId = 'v_site_configuration';
+    /** page Courbes of a new site: its chart shows the tags chosen in "Tags des courbes" */
+    private static readonly curvesViewId = 'v_site_courbes';
+    private static readonly curvesChartId = 'chart_site_courbes';
 
     sites: SiteInfo[] = [];
     expanded: Record<string, boolean> = {};
@@ -42,6 +49,7 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
 
     constructor(private http: HttpClient,
                 private dialog: MatDialog,
+                private projectService: ProjectService,
                 private translateService: TranslateService,
                 private toastr: ToastrService) {
     }
@@ -194,6 +202,59 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
             : (page.name || 'page').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
                 .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'page';
         return { file: `${name}.html`, page: page.name, viewId: page.id, url: `/site/${encodeURIComponent(site.name)}/fichiers/${name}.html` };
+    }
+
+    /**
+     * choice of the tags of the page Courbes: the chart of the page shows these tags,
+     * and the tags are recorded (DAQ) to have their history (period chosen with the calendar of the chart)
+     */
+    onConfigureCurves(site: SiteInfo) {
+        const chartId = this.getCurvesChartId();
+        const charts: Chart[] = this.projectService.getCharts() || [];
+        const chart = charts.find(c => c.id === chartId);
+        const devices: Record<string, Device> = this.projectService.getDevices() || {};
+        const dialogRef = this.dialog.open(SiteCurvesDialogComponent, {
+            position: { top: '60px' },
+            data: <SiteCurvesData>{ site: site.name, devices, lines: chart?.lines || [] }
+        });
+        dialogRef.afterClosed().subscribe((result: SiteCurvesResult) => {
+            if (!result) {
+                return;
+            }
+            const newCharts = charts.filter(c => c.id !== chartId);
+            newCharts.push(<Chart>{ id: chartId, name: chart?.name || this.translateService.instant('editor.sites-curves-chart-name'), lines: result.lines });
+            this.projectService.setCharts(newCharts);
+            // the history of a tag exists only if the tag is recorded
+            Object.values(devices).forEach(device => {
+                let changed = false;
+                result.lines.forEach(line => {
+                    const tag = device.tags?.[line.id];
+                    if (tag && !tag.daq?.enabled) {
+                        tag.daq = Object.assign({ interval: 5, changed: true, restored: false }, tag.daq, { enabled: true });
+                        changed = true;
+                    }
+                });
+                if (changed) {
+                    this.projectService.setDeviceTags(device);
+                }
+            });
+            if (!this.hasCurvesChart(chartId)) {
+                this.toastr.warning(this.translateService.instant('editor.sites-curves-no-chart'));
+            } else {
+                this.toastr.success(this.translateService.instant('editor.sites-curves-saved', { count: result.lines.length }));
+            }
+        });
+    }
+
+    /** chart shown by the page Courbes (first chart object of the page), else the default chart of the site */
+    private getCurvesChartId(): string {
+        const view = this.views?.find(v => v.id === EditorSitesListComponent.curvesViewId);
+        const chartItem = Object.values(view?.items || {}).find(item => item.type === 'svg-ext-html_chart' && item.property?.id);
+        return chartItem?.property?.id || EditorSitesListComponent.curvesChartId;
+    }
+
+    private hasCurvesChart(chartId: string): boolean {
+        return (this.views || []).some(view => Object.values(view.items || {}).some(item => item.type === 'svg-ext-html_chart' && item.property?.id === chartId));
     }
 
     onOpenFile(file: SiteFile) {
