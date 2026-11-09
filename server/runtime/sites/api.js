@@ -8,6 +8,7 @@
  * GET  /api/site/history?tags=a,b&from=..&to=..&maxPoints=2000
  *                                     history between from and to (ms or ISO date), default: last 8 hours,
  *                                     tags of the page Courbes if no tags
+ * PUT  /api/site/curves               choice of the tags of the page Courbes { curves: [{ tag, label, color, axis }] }
  */
 
 'use strict';
@@ -100,7 +101,74 @@ function router(runtime, settings, siteName) {
         }
     });
 
+    /**
+     * choice of the tags of the page Courbes (from configuration.html)
+     * body: { curves: [{ tag: name or id, label, color, axis: 'gauche' | 'droite' }] }
+     * the chart of the page Courbes shows these tags, and the tags are recorded (DAQ) to have their history
+     */
+    app.put('/curves', express.json({ limit: '200kb' }), async (req, res) => {
+        try {
+            const list = req.body && Array.isArray(req.body.curves) ? req.body.curves : null;
+            if (!list || list.length > MAX_TAGS) {
+                return res.status(400).json({ error: 'invalid_curves', message: `Liste des courbes invalide (${MAX_TAGS} tags au plus).` });
+            }
+            const project = await runtime.project.getProject(null, -1);
+            const all = allTags(project);
+            const lines = list.map((curve, index) => {
+                const tag = all.find(t => t.id === curve.tag || t.name === curve.tag);
+                if (!tag) {
+                    const err = new Error(`Tag inconnu dans ce site : ${curve.tag}`);
+                    err.status = 404;
+                    throw err;
+                }
+                return {
+                    device: tag.deviceName, id: tag.id, name: tag.name,
+                    label: String(curve.label || tag.name).trim().slice(0, 100) || tag.name,
+                    color: /^#[0-9a-fA-F]{3,8}$/.test(curve.color || '') ? curve.color : COLORS[index % COLORS.length],
+                    yaxis: curve.axis === 'droite' ? 2 : 1,
+                    spanGaps: true
+                };
+            });
+            const chartId = curvesChartId(project);
+            const old = (project.charts || []).find(c => c.id === chartId);
+            const charts = (project.charts || []).filter(c => c.id !== chartId);
+            charts.push({ id: chartId, name: (old && old.name) || 'Courbes du site', lines });
+            await save(runtime, 'charts', charts);
+            // the history of a tag exists only if the tag is recorded
+            for (const device of Object.values(project.devices || {})) {
+                let changed = false;
+                lines.forEach(line => {
+                    const tag = device.tags && device.tags[line.id];
+                    if (tag && !(tag.daq && tag.daq.enabled)) {
+                        tag.daq = Object.assign({ interval: 5, changed: true, restored: false }, tag.daq, { enabled: true });
+                        changed = true;
+                    }
+                });
+                if (changed) {
+                    await save(runtime, 'set-device', device);
+                }
+            }
+            res.json({ site: siteName, curves: curves(await runtime.project.getProject(null, -1)) });
+        } catch (err) {
+            sendError(res, err);
+        }
+    });
+
     return app;
+}
+
+const COLORS = ['#1565C0', '#E65100', '#2E7D32', '#C62828', '#6A1B9A', '#00838F', '#F9A825', '#4E342E', '#AD1457', '#37474F'];
+
+/** save a part of the project and update the runtime, like the editor (api/projectData) */
+function save(runtime, cmd, data) {
+    return runtime.project.setProjectData(cmd, data).then(() => runtime.update(cmd, data));
+}
+
+/** chart shown by the page Courbes, else the default chart of the site */
+function curvesChartId(project) {
+    const view = ((project.hmi && project.hmi.views) || []).find(v => v.id === CURVES_VIEW);
+    const item = Object.values((view && view.items) || {}).find(i => i.type === 'svg-ext-html_chart' && i.property && i.property.id);
+    return item ? item.property.id : 'chart_site_courbes';
 }
 
 /** tags of the site, without the system tags (connection status...) */

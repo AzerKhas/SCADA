@@ -370,7 +370,86 @@ function curvesSection(project, views) {
             line.color || '', Number(line.yaxis) === 2 ? 'droite' : 'gauche',
             found && found.tag.daq && found.tag.daq.enabled ? `oui (${found.tag.daq.interval || ''} s)` : 'non'];
     }))}
+  ${curvesEditor()}
 </section>`;
+}
+
+/**
+ * choice of the tags of the page Courbes in configuration.html: list of the tags of the site (API info),
+ * saved with the API (PUT curves); the file is written again by the server after the save
+ */
+function curvesEditor() {
+    return `<h3>Choisir les tags des courbes</h3>
+<p class="info">Cochez les tags à afficher dans la page Courbes, puis Enregistrer. Les tags choisis sont enregistrés (historique).</p>
+<div class="period">
+  <input id="curves-filter" placeholder="Rechercher un tag" size="30">
+  <button id="curves-save" class="primary">Enregistrer</button>
+  <span id="curves-status" class="status"></span>
+</div>
+<div class="history"><table><thead><tr><th></th><th>Tag</th><th>Connexion</th><th>Adresse</th><th>Libellé de la courbe</th><th>Couleur</th><th>Axe</th></tr></thead>
+<tbody id="curves-rows"><tr><td colspan="7" class="empty">Chargement...</td></tr></tbody></table></div>
+<script src="site-api.js"></script>
+<script>
+  (function () {
+    var colors = ['#1565C0', '#E65100', '#2E7D32', '#C62828', '#6A1B9A', '#00838F', '#F9A825', '#4E342E', '#AD1457', '#37474F'];
+    var rows = [];
+    function status(text, error) {
+      var s = document.getElementById('curves-status');
+      s.textContent = text;
+      s.className = 'status' + (error ? ' error' : '');
+    }
+    function escapeHtml(t) { return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+    function render() {
+      var text = document.getElementById('curves-filter').value.trim().toLowerCase();
+      document.getElementById('curves-rows').innerHTML = rows.map(function (r, i) {
+        var visible = !text || (r.name + ' ' + r.device + ' ' + r.label + ' ' + r.address).toLowerCase().indexOf(text) >= 0;
+        return '<tr' + (visible ? '' : ' style="display:none"') + '>' +
+          '<td><input type="checkbox" data-i="' + i + '" data-f="selected"' + (r.selected ? ' checked' : '') + '></td>' +
+          '<td>' + escapeHtml(r.name) + (r.recorded ? ' &#128339;' : '') + '</td><td>' + escapeHtml(r.device) + '</td><td>' + escapeHtml(r.address) + '</td>' +
+          '<td><input data-i="' + i + '" data-f="label" value="' + escapeHtml(r.label) + '" size="24"></td>' +
+          '<td><input type="color" data-i="' + i + '" data-f="color" value="' + r.color + '"></td>' +
+          '<td><select data-i="' + i + '" data-f="axis"><option value="gauche"' + (r.axis !== 'droite' ? ' selected' : '') + '>gauche</option>' +
+          '<option value="droite"' + (r.axis === 'droite' ? ' selected' : '') + '>droite</option></select></td></tr>';
+      }).join('') || '<tr><td colspan="7" class="empty">Aucun tag dans ce site.</td></tr>';
+    }
+    function load() {
+      SiteApi.info().then(function (info) {
+        rows = info.tags.map(function (t, i) {
+          var c = info.curves.filter(function (x) { return x.tagId === t.id; })[0];
+          return { tag: t.id, name: t.name, device: t.device, address: t.address, recorded: t.recorded, selected: !!c,
+            label: c ? c.label : t.name, color: (c && c.color ? c.color : colors[i % colors.length]).slice(0, 7), axis: c ? c.axis : 'gauche',
+            order: c ? info.curves.indexOf(c) : 1000 + i };
+        }).sort(function (a, b) { return a.order - b.order; });
+        // a tag not yet chosen gets a color not used by the chosen curves
+        var used = rows.filter(function (r) { return r.selected; }).map(function (r) { return r.color.toLowerCase(); });
+        var free = colors.filter(function (c) { return used.indexOf(c.toLowerCase()) < 0; });
+        rows.filter(function (r) { return !r.selected; }).forEach(function (r, i) { if (free.length) { r.color = free[i % free.length]; } });
+        render();
+        status(info.curves.length + ' tag(s) choisi(s)');
+      }).catch(function (err) { status(err.message, true); });
+    }
+    document.getElementById('curves-rows').addEventListener('change', function (e) {
+      var i = e.target.getAttribute('data-i'), f = e.target.getAttribute('data-f');
+      if (i !== null) { rows[i][f] = f === 'selected' ? e.target.checked : e.target.value; }
+    });
+    document.getElementById('curves-rows').addEventListener('input', function (e) {
+      var i = e.target.getAttribute('data-i'), f = e.target.getAttribute('data-f');
+      if (i !== null && f === 'label') { rows[i].label = e.target.value; }
+    });
+    document.getElementById('curves-filter').addEventListener('input', render);
+    document.getElementById('curves-save').addEventListener('click', function () {
+      var curves = rows.filter(function (r) { return r.selected; }).map(function (r) {
+        return { tag: r.tag, label: r.label, color: r.color, axis: r.axis };
+      });
+      status('Enregistrement...');
+      SiteApi.saveCurves(curves).then(function (result) {
+        status('Enregistré : ' + result.curves.length + ' tag(s). Page Courbes mise à jour.');
+        setTimeout(function () { location.reload(); }, 2500);
+      }).catch(function (err) { status(err.message, true); });
+    });
+    load();
+  })();
+</script>`;
 }
 
 function itemsTable(items, tags) {

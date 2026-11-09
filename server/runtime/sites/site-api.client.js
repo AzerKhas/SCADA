@@ -5,6 +5,7 @@
  *   SiteApi.info()                                  site, tags, curves of the page Courbes
  *   SiteApi.values(['tag1', 'tag2'])                current values
  *   SiteApi.history({ tags, from, to, maxPoints })  history (from/to: Date, ms or ISO)
+ *   SiteApi.saveCurves([{ tag, label, color, axis }]) choice of the tags of the page Courbes
  *   SiteApi.drawChart(canvas, series, curves)       curves on a canvas
  *   SiteApi.historyTable(series)                    { head, rows } with one column per tag
  */
@@ -14,28 +15,33 @@
     // /site/<name>/fichiers/courbes.html -> /site/<name>/api/site
     var base = location.pathname.replace(/\/fichiers\/[^/]*$/, '') + '/api/site';
 
+    function headers(json) {
+        var result = json ? { 'Content-Type': 'application/json' } : {};
+        // with the security of FUXA enabled: token of the user logged in FUXA in this tab
+        try {
+            var token = (JSON.parse(sessionStorage.getItem('currentUser')) || {}).token;
+            if (token) {
+                result['x-access-token'] = token;
+            }
+        } catch (err) {
+            // no user logged in
+        }
+        return result;
+    }
+
+    function answer(res) {
+        return res.json().then(function (body) {
+            if (!res.ok) {
+                throw new Error(body && body.message ? body.message : 'Erreur ' + res.status);
+            }
+            return body;
+        });
+    }
+
     function get(path, params) {
         var query = Object.keys(params || {}).filter(function (k) { return params[k] !== undefined && params[k] !== null && params[k] !== ''; })
             .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
-        var headers = {};
-        // with the security of FUXA enabled: token of the user logged in FUXA in this tab
-        var token = null;
-        try {
-            token = (JSON.parse(sessionStorage.getItem('currentUser')) || {}).token;
-        } catch (err) {
-            token = null;
-        }
-        if (token) {
-            headers['x-access-token'] = token;
-        }
-        return fetch(base + path + (query ? '?' + query : ''), { headers: headers }).then(function (res) {
-            return res.json().then(function (body) {
-                if (!res.ok) {
-                    throw new Error(body && body.message ? body.message : 'Erreur ' + res.status);
-                }
-                return body;
-            });
-        });
+        return fetch(base + path + (query ? '?' + query : ''), { headers: headers(false) }).then(answer);
     }
 
     function time(value) {
@@ -61,6 +67,10 @@
             to: time(options.to),
             maxPoints: options.maxPoints
         });
+    }
+
+    function saveCurves(curves) {
+        return fetch(base + '/curves', { method: 'PUT', headers: headers(true), body: JSON.stringify({ curves: curves }) }).then(answer);
     }
 
     function pad(n) {
@@ -189,6 +199,7 @@
         info: info,
         values: values,
         history: history,
+        saveCurves: saveCurves,
         drawChart: drawChart,
         historyTable: historyTable,
         formatDate: formatDate,
