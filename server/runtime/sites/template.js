@@ -67,26 +67,64 @@ function simplifyCurvesView(view) {
     view.svgcontent = svg;
 }
 
-/** page Configuration (its content is made in a next step) */
+const CONFIGURATION_VIEW = 'v_site_configuration';
+const CONFIGURATION_IFRAME = 'OXC_site_configuration';
+
+/**
+ * page Configuration: its title and a frame (iframe object of FUXA) showing configuration.html of the site
+ * (all the properties of the site, choice of the tags of the curves)
+ */
 function configurationView(name, model) {
     const width = (model.profile && model.profile.width) || 1280;
     const height = (model.profile && model.profile.height) || 720;
+    const frame = { x: 20, y: 80, width: width - 40, height: height - 100 };
     const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" xmlns:html="http://www.w3.org/1999/xhtml">
  <g>
   <title>Layer 1</title>
-  <text id="svg_cfg_title" x="40" y="60" font-family="Arial" font-size="32" font-weight="bold" fill="#0D47A1">CONFIGURATION - ${escapeXml(name)}</text>
-  <text id="svg_cfg_info" x="40" y="110" font-family="Arial" font-size="18" fill="#333333">Tags à exploiter et paramètres du site.</text>
+  <text id="svg_cfg_title" x="40" y="55" font-family="Arial" font-size="32" font-weight="bold" fill="#0D47A1">CONFIGURATION - ${escapeXml(name)}</text>
+  <g id="${CONFIGURATION_IFRAME}" type="svg-ext-own_ctrl-iframe" data-name="configuration_site" style="pointer-events:none" fill="#FFFFFF" stroke="#000000" stroke-width="1" font-size="14" font-family="sans-serif" text-anchor="right" xml:space="preserve">
+   <rect id="svg_cfg_frame" x="${frame.x}" y="${frame.y}" width="${frame.width}" height="${frame.height}" stroke-width="0"/>
+   <foreignObject id="H-${CONFIGURATION_IFRAME}_d" x="${frame.x}" y="${frame.y}" width="${frame.width}" height="${frame.height}">
+    <div xmlns="http://www.w3.org/1999/xhtml" id="D-${CONFIGURATION_IFRAME}_d" style="width:100%;height:100%;"></div>
+   </foreignObject>
+  </g>
  </g>
 </svg>`;
     return {
-        id: 'v_site_configuration',
+        id: CONFIGURATION_VIEW,
         name: 'Configuration',
         type: model.type || 'svg',
         profile: JSON.parse(JSON.stringify(model.profile || {})),
-        items: {},
+        items: {
+            [CONFIGURATION_IFRAME]: {
+                id: CONFIGURATION_IFRAME,
+                type: 'svg-ext-own_ctrl-iframe',
+                name: 'configuration_site',
+                // relative to the base of the pages of the site (/site/<name>/): still valid after a renaming
+                property: { address: 'fichiers/configuration.html' },
+                label: 'HtmlIframe',
+                hide: false,
+                lock: false
+            }
+        },
         variables: {},
         svgcontent: svg
     };
+}
+
+/**
+ * the page Configuration of the first sites only had a title and a text: it gets the frame with configuration.html
+ * (only when the page was not changed by the user: no object in the page)
+ * @returns the new page, or null if nothing to change
+ */
+function upgradeConfigurationView(view, name) {
+    if (!view || view.id !== CONFIGURATION_VIEW || Object.keys(view.items || {}).length || !(view.svgcontent || '').includes('svg_cfg_info')) {
+        return null;
+    }
+    const upgraded = configurationView(name, view);
+    upgraded.name = view.name;
+    upgraded.type = view.type;
+    return upgraded;
 }
 
 function menuItem(id, text, view, icon) {
@@ -103,5 +141,6 @@ function escapeXml(text) {
 }
 
 module.exports = {
-    create: create
+    create: create,
+    upgradeConfigurationView: upgradeConfigurationView
 };

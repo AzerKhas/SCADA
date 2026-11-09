@@ -24,6 +24,7 @@ var logger;
 var siteName;
 var siteDir;
 var timer = null;
+var upgradeChecked = false;
 
 function init(_runtime, settings, _logger, _siteName) {
     runtime = _runtime;
@@ -43,6 +44,26 @@ function init(_runtime, settings, _logger, _siteName) {
     schedule();
 }
 
+/**
+ * the page Configuration of the first sites gets the frame showing configuration.html (template.js)
+ * checked once, at the first writing of the files (the pages of the project are not loaded at the start)
+ */
+async function upgradeConfigurationPage(project) {
+    const view = ((project.hmi && project.hmi.views) || []).find(v => v.id === CONFIGURATION_VIEW);
+    const upgraded = require('./template').upgradeConfigurationView(view, siteName);
+    if (upgraded) {
+        await runtime.project.setProjectData('set-view', upgraded);
+        await runtime.update('set-view', upgraded);
+        logger.info('site files: page Configuration updated (configuration.html shown in the page)');
+    }
+}
+
+/** the page Configuration that shows configuration.html is not copied in configuration.html */
+function showsThisFile(view) {
+    return Object.values(view.items || {}).some(item => item.type === 'svg-ext-own_ctrl-iframe' &&
+        /configuration\.html$/.test((item.property && item.property.address) || ''));
+}
+
 function schedule() {
     clearTimeout(timer);
     timer = setTimeout(() => writeFiles().catch(err => logger.error(`site files: ${err}`)), WRITE_DELAY);
@@ -52,6 +73,11 @@ async function writeFiles() {
     const project = await runtime.project.getProject(null, -1);
     if (!project || !project.hmi) {
         return;
+    }
+    if (!upgradeChecked && (project.hmi.views || []).length) {
+        upgradeChecked = true;
+        // the save of the page writes the files again (setProjectData)
+        await upgradeConfigurationPage(project);
     }
     const views = project.hmi.views || [];
     const files = [];
@@ -145,7 +171,7 @@ function configurationHtml(project, configurationView, files) {
   <p class="info">Fichier généré automatiquement à chaque enregistrement de l'éditeur FUXA (${esc(dateText())}).
      Il contient toutes les propriétés configurées dans l'éditeur pour ce site.</p>
 </header>
-${configurationView ? `<section class="synoptic" style="background:${esc(profile.bkcolor || '#ffffff')};width:${Number(profile.width) || 1280}px;height:${Number(profile.height) || 720}px">
+${configurationView && !showsThisFile(configurationView) ? `<section class="synoptic" style="background:${esc(profile.bkcolor || '#ffffff')};width:${Number(profile.width) || 1280}px;height:${Number(profile.height) || 720}px">
 ${configurationView.svgcontent || ''}
 </section>` : ''}
 <section>
