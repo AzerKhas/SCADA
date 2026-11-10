@@ -25,6 +25,8 @@ var siteName;
 var siteDir;
 var timer = null;
 var upgradeChecked = false;
+/** files of the pages, for the navigation bar of the files (set before each writing) */
+var navFiles = [];
 
 function init(_runtime, settings, _logger, _siteName) {
     runtime = _runtime;
@@ -82,14 +84,21 @@ async function writeFiles() {
     const views = project.hmi.views || [];
     const files = [];
     const used = new Set(['configuration.html']);
-    views.filter(view => view.id !== CONFIGURATION_VIEW).forEach(view => {
-        const file = fileName(view.name, used);
-        fs.writeFileSync(path.join(siteDir, file), pageHtml(view, project));
-        files.push({ file, page: view.name, viewId: view.id });
+    const pageViews = views.filter(view => view.id !== CONFIGURATION_VIEW);
+    pageViews.forEach(view => {
+        files.push({ file: fileName(view.name, used), page: view.name, viewId: view.id });
     });
     const configurationView = views.find(view => view.id === CONFIGURATION_VIEW);
-    fs.writeFileSync(path.join(siteDir, 'configuration.html'), configurationHtml(project, configurationView, files));
+    const pageFiles = files.slice();
     files.splice(order(files), 0, { file: 'configuration.html', page: configurationView ? configurationView.name : 'Configuration', viewId: configurationView ? configurationView.id : null });
+    // same order as the menu of the site (pages out of the menu after)
+    const menu = ((project.hmi.layout && project.hmi.layout.navigation && project.hmi.layout.navigation.items) || []).map(item => item.view);
+    const rankInMenu = f => { const i = menu.indexOf(f.viewId); return i < 0 ? menu.length : i; };
+    navFiles = files.slice().sort((a, b) => rankInMenu(a) - rankInMenu(b));
+    pageViews.forEach((view, i) => {
+        fs.writeFileSync(path.join(siteDir, pageFiles[i].file), pageHtml(view, project, pageFiles[i].file));
+    });
+    fs.writeFileSync(path.join(siteDir, 'configuration.html'), configurationHtml(project, configurationView, pageFiles));
     // access to the data of the site (API) for the pages of the folder
     fs.copyFileSync(path.join(__dirname, 'site-api.client.js'), path.join(siteDir, 'site-api.js'));
     fs.writeFileSync(path.join(siteDir, 'api.html'), apiHtml());
@@ -134,13 +143,13 @@ function fileName(pageName, used) {
 }
 
 /** page with the synoptic (SVG of the editor) and the definition of its objects */
-function pageHtml(view, project) {
+function pageHtml(view, project, file) {
     const profile = view.profile || {};
     const tags = tagNames(project);
     const items = Object.values(view.items || {});
     const liveUrl = `/site/${encodeURIComponent(siteName)}/home/${encodeURIComponent(view.name)}`;
     const live = view.id === CURVES_VIEW ? curvesLive() : view.id === HISTORY_VIEW ? historyLive() : '';
-    return document(`${view.name} - ${siteName}`, `
+    return document(`${view.name} - ${siteName}`, `${navBar(file)}
 <header>
   <h1>${esc(view.name)} <small>${esc(siteName)}</small></h1>
   <p class="info">Fichier généré automatiquement à chaque enregistrement de l'éditeur FUXA (${esc(dateText())}).
@@ -165,7 +174,7 @@ function configurationHtml(project, configurationView, files) {
     const views = (project.hmi && project.hmi.views) || [];
     const menu = (project.hmi.layout && project.hmi.layout.navigation && project.hmi.layout.navigation.items) || [];
     const profile = (configurationView && configurationView.profile) || {};
-    return document(`Configuration - ${siteName}`, `
+    return document(`Configuration - ${siteName}`, `${navBar('configuration.html')}
 <header>
   <h1>Configuration <small>${esc(siteName)}</small></h1>
   <p class="info">Fichier généré automatiquement à chaque enregistrement de l'éditeur FUXA (${esc(dateText())}).
@@ -360,7 +369,7 @@ function historyLive() {
 /** api.html: services of the API of the site, with a test of each service */
 function apiHtml() {
     const base = `/site/${siteName}/api/site`;
-    return document(`API - ${siteName}`, `
+    return document(`API - ${siteName}`, `${navBar('api.html')}
 <header>
   <h1>API du site <small>${esc(siteName)}</small></h1>
   <p class="info">Services d'accès aux données de ce site (tags, valeurs, historique). Chaque site a sa propre API : elle ne donne que les données du site.
@@ -591,6 +600,23 @@ function jsonBlock(id, value) {
 <script type="application/json" id="${id}">${json}</script>`;
 }
 
+/**
+ * navigation bar of the files: back, supervision of the site, the other files, API, editor
+ * (hidden when the file is shown in a page of FUXA, frame of the page Configuration)
+ */
+function navBar(current) {
+    const base = `/site/${encodeURIComponent(siteName)}`;
+    const link = (href, text, active) => `<a href="${href}"${active ? ' class="active"' : ''}>${esc(text)}</a>`;
+    const pages = navFiles.map(f => link(f.file, f.page, f.file === current)).join('');
+    return `<nav class="sitenav" id="sitenav">
+  <a href="${base}/home" class="back" onclick="if (history.length > 1 && document.referrer) { history.back(); return false; }">&#8592; Retour</a>
+  ${link(`${base}/home`, 'Supervision')}
+  <span class="sep"></span>${pages}${link('api.html', 'API', current === 'api.html')}
+  <span class="sep"></span>${link(`${base}/editor`, 'Éditeur')}
+</nav>
+<script>if (window.self !== window.top) { document.getElementById('sitenav').style.display = 'none'; }</script>`;
+}
+
 function document(title, body) {
     return `<!doctype html>
 <html lang="fr">
@@ -618,6 +644,11 @@ function document(title, body) {
   .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 6px 0; font-size: 13px; }
   .legend i { display: inline-block; width: 22px; height: 4px; margin-right: 6px; vertical-align: middle; }
   .history { max-height: 520px; overflow: auto; }
+  .sitenav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: -20px -20px 18px -20px; padding: 8px 20px; background: #1f3864; position: sticky; top: 0; z-index: 10; }
+  .sitenav a { color: #fff; text-decoration: none; padding: 5px 10px; border-radius: 3px; font-size: 14px; }
+  .sitenav a:hover { background: rgba(255,255,255,0.15); } .sitenav a.active { background: #1e88e5; }
+  .sitenav a.back { font-weight: bold; border: 1px solid rgba(255,255,255,0.5); margin-right: 6px; }
+  .sitenav .sep { width: 1px; height: 20px; background: rgba(255,255,255,0.35); margin: 0 6px; }
 </style>
 </head>
 <body>
