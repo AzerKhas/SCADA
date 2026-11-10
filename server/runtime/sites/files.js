@@ -442,7 +442,7 @@ function curvesSection(project, views) {
  */
 function curvesEditor() {
     return `<h3>Choisir les tags des courbes</h3>
-<p class="info">Cochez les tags à afficher dans la page Courbes, puis Enregistrer. Les tags choisis sont enregistrés (historique).</p>
+<p class="info">Cochez les tags à afficher dans la page Courbes : chaque changement est enregistré automatiquement. Les tags choisis sont enregistrés (historique) à partir de ce moment.</p>
 <div class="period">
   <input id="curves-filter" placeholder="Rechercher un tag" size="30">
   <button id="curves-save" class="primary">Enregistrer</button>
@@ -490,25 +490,43 @@ function curvesEditor() {
         status(info.curves.length + ' tag(s) choisi(s)');
       }).catch(function (err) { status(err.message, true); });
     }
+    // each change is saved (short delay: several boxes checked quickly give one save)
+    var timer = null, saving = false, again = false;
+    function schedule() {
+      clearTimeout(timer);
+      status('Modification en attente...');
+      timer = setTimeout(save, 600);
+    }
+    function save() {
+      timer = null;
+      if (saving) { again = true; return; }
+      var curves = rows.filter(function (r) { return r.selected; }).map(function (r) {
+        return { tag: r.tag, label: r.label, color: r.color, axis: r.axis };
+      });
+      saving = true;
+      status('Enregistrement...');
+      SiteApi.saveCurves(curves).then(function (result) {
+        status('Enregistré : ' + result.curves.length + ' tag(s) dans la page Courbes.');
+      }).catch(function (err) {
+        status('Non enregistré : ' + err.message, true);
+      }).then(function () {
+        saving = false;
+        if (again) { again = false; save(); }
+      });
+    }
+    window.addEventListener('beforeunload', function (e) {
+      if (timer || saving) { if (timer) { clearTimeout(timer); save(); } e.preventDefault(); e.returnValue = ''; }
+    });
     document.getElementById('curves-rows').addEventListener('change', function (e) {
       var i = e.target.getAttribute('data-i'), f = e.target.getAttribute('data-f');
-      if (i !== null) { rows[i][f] = f === 'selected' ? e.target.checked : e.target.value; }
+      if (i !== null) { rows[i][f] = f === 'selected' ? e.target.checked : e.target.value; schedule(); }
     });
     document.getElementById('curves-rows').addEventListener('input', function (e) {
       var i = e.target.getAttribute('data-i'), f = e.target.getAttribute('data-f');
       if (i !== null && f === 'label') { rows[i].label = e.target.value; }
     });
     document.getElementById('curves-filter').addEventListener('input', render);
-    document.getElementById('curves-save').addEventListener('click', function () {
-      var curves = rows.filter(function (r) { return r.selected; }).map(function (r) {
-        return { tag: r.tag, label: r.label, color: r.color, axis: r.axis };
-      });
-      status('Enregistrement...');
-      SiteApi.saveCurves(curves).then(function (result) {
-        status('Enregistré : ' + result.curves.length + ' tag(s). Page Courbes mise à jour.');
-        setTimeout(function () { location.reload(); }, 2500);
-      }).catch(function (err) { status(err.message, true); });
-    });
+    document.getElementById('curves-save').addEventListener('click', function () { clearTimeout(timer); save(); });
     load();
   })();
 </script>`;
