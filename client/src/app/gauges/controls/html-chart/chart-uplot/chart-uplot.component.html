@@ -28,6 +28,18 @@
                 (click)="onClick('F')">
                 <mat-icon aria-label="forward">skip_next</mat-icon>
             </button>
+            <!-- custom-SCADA: export of the period shown (after a zoom: the zoomed period) -->
+            <ng-container *ngIf="!isEditor">
+                <button mat-flat-button class="mychart-toolbar-step" [style.color]="options.axisLabelColor" [style.background-color]="options.colorBackground"
+                    [matMenuTriggerFor]="exportMenu" [disabled]="exporting" matTooltip="{{'chart.export' | translate}}">
+                    <mat-icon aria-label="export">download</mat-icon>
+                </button>
+                <mat-menu #exportMenu="matMenu" [overlapTrigger]="false">
+                    <button mat-menu-item (click)="onExport('xlsx')"><mat-icon>table_view</mat-icon>{{'chart.export-xlsx' | translate}}</button>
+                    <button mat-menu-item (click)="onExport('png')"><mat-icon>image</mat-icon>{{'chart.export-png' | translate}}</button>
+                    <button mat-menu-item (click)="onExport('pdf')"><mat-icon>picture_as_pdf</mat-icon>{{'chart.export-pdf' | translate}}</button>
+                </mat-menu>
+            </ng-container>
         </div>
     </div>
     <ngx-uplot class="mychart-graph" #nguplot></ngx-uplot>

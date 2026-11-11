@@ -7,6 +7,8 @@
  * - /api/sites (and /site/<name>/api/sites, called by the editor of a site) lists and creates the sites,
  *   /api/sites/<name>/stop|start|rename and DELETE /api/sites/<name> manage a site
  *   (a deleted site is moved to sites/_supprimes/, not erased)
+ * - GET /api/sites/<name>/export gives the folder of the site in a .zip file,
+ *   POST /api/sites?import=<new name> (body: the .zip file) creates a site from an exported folder
  */
 
 'use strict';
@@ -17,6 +19,7 @@ const http = require('http');
 const net = require('net');
 const { spawn } = require('child_process');
 const siteTemplate = require('./template');
+const zip = require('./zip');
 
 const SITE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
 const SITE_URL = /^\/site\/([^/?#]+)(\/.*)?$/;
@@ -24,11 +27,15 @@ const SITE_FILE = 'site.json';
 /** files of a site written by its instance (files.js): /site/<name>/fichiers/accueil.html, site-api.js */
 const FILE_URL = /^\/fichiers\/([a-z0-9-]+\.(?:html|js))(\?.*)?$/;
 const PAGES_FILE = 'pages.json';
-const SITES_API = /^\/api\/sites(?:\/([^/?#]+)(?:\/(stop|start|rename))?)?\/?(?:\?.*)?$/;
+const SITES_API = /^\/api\/sites(?:\/([^/?#]+)(?:\/(stop|start|rename|export))?)?\/?(?:\?.*)?$/;
 /** folder of the deleted sites (its name is not a valid site name, so it is not loaded) */
 const DELETED_DIR = '_supprimes';
 /** time to wait for the end of an instance before moving its folder */
 const STOP_TIMEOUT = 15000;
+/** files of a site not exported (logs) */
+const EXPORT_SKIP = ['_logs', 'site.log'];
+/** size max of an imported .zip file */
+const IMPORT_LIMIT = 1024 * 1024 * 1024;
 /** time to wait for a new instance before sending its first project */
 const START_TIMEOUT = 60000;
 
@@ -108,6 +115,9 @@ function apiSites(req, res, name, action) {
                 return fail(httpError(404, 'site_not_found', `Le site « ${name} » n'existe pas.`));
             }
             let task = null;
+            if (req.method === 'GET' && action === 'export') {
+                return exportSite(site, res).catch(fail);
+            }
             if (req.method === 'DELETE' && !action) {
                 task = deleteSite(site).then(() => ({ deleted: site.name }));
             } else if (req.method === 'POST' && action === 'stop') {
@@ -121,6 +131,8 @@ function apiSites(req, res, name, action) {
         }
         if (req.method === 'GET') {
             listSites().then(result => res.json(result)).catch(err => res.status(500).json({ error: 'sites_error', message: err.toString() }));
+        } else if (req.method === 'POST' && req.query && req.query.import !== undefined) {
+            importSite(req, String(req.query.import)).then(site => res.json(siteInfo(site))).catch(fail);
         } else if (req.method === 'POST') {
             readBody(req).then(body => createSite(body && body.name)).then(site => {
                 res.json(siteInfo(site));
@@ -202,6 +214,100 @@ async function createSite(name) {
     await requestSite(site, 'POST', '/api/project', siteTemplate.create(name, settings.appDir));
     logger.info(`sites: '${name}' created on port ${site.port}`);
     return site;
+}
+
+/**
+ * the folder of the site in a .zip file: <name>/site.json, _appdata (project, settings), _db (history), HTML files...
+ * the site can stay started (its files are only read)
+ */
+async function exportSite(site, res) {
+    const dir = path.join(sitesDir, site.name);
+    const entries = [];
+    const walk = (folder, prefix) => {
+        fs.readdirSync(folder, { withFileTypes: true }).forEach(entry => {
+            const full = path.join(folder, entry.name);
+            const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+            if (!prefix && EXPORT_SKIP.includes(entry.name)) {
+                return;
+            }
+            if (entry.isDirectory()) {
+                walk(full, name);
+            } else if (entry.isFile()) {
+                entries.push({ name: `${site.name}/${name}`, data: fs.readFileSync(full), date: fs.statSync(full).mtime });
+            }
+        });
+    };
+    walk(dir, '');
+    const buffer = zip.create(entries);
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    res.set({
+        'Content-Type': 'application/zip',
+        'Content-Length': buffer.length,
+        'Content-Disposition': `attachment; filename="Site_${site.name}_${stamp}.zip"`
+    });
+    res.end(buffer);
+    logger.info(`sites: '${site.name}' exported (${entries.length} files, ${buffer.length} bytes)`);
+}
+
+/** new site from the .zip file of an exported site (body of the request) */
+async function importSite(req, name) {
+    name = validateNewName(name);
+    const buffer = await readRaw(req, IMPORT_LIMIT);
+    let entries;
+    try {
+        entries = zip.read(buffer);
+    } catch (err) {
+        throw httpError(400, 'invalid_zip', `Fichier invalide : ${err.message}`);
+    }
+    // folder of the site in the zip: the folder with site.json (or _appdata), with or without a first folder
+    const marker = entries.map(e => e.name).filter(n => /(^|\/)site\.json$/.test(n) || /(^|\/)_appdata\//.test(n))
+        .map(n => n.replace(/(site\.json|_appdata\/.*)$/, '')).sort((a, b) => a.length - b.length)[0];
+    if (marker === undefined) {
+        throw httpError(400, 'not_a_site', 'Ce fichier n\'est pas un export de site (site.json et _appdata manquants).');
+    }
+    const dir = path.join(sitesDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    let count = 0;
+    entries.filter(e => e.name.startsWith(marker)).forEach(e => {
+        const relative = e.name.slice(marker.length);
+        const first = relative.split('/')[0];
+        if (!relative || EXPORT_SKIP.includes(first) || relative === SITE_FILE) {
+            return;
+        }
+        const target = path.resolve(dir, relative);
+        // no file out of the folder of the site (names with ..)
+        if (!target.startsWith(dir + path.sep)) {
+            return;
+        }
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, e.data);
+        count++;
+    });
+    const site = { name, port: await freePort(), created: new Date().toISOString() };
+    sites[name] = site;
+    writeSiteFile(site);
+    start(site);
+    await waitRunning(site);
+    logger.info(`sites: '${name}' imported (${count} files) on port ${site.port}`);
+    return site;
+}
+
+function readRaw(req, limit) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        let size = 0;
+        req.on('data', chunk => {
+            size += chunk.length;
+            if (size > limit) {
+                reject(httpError(413, 'too_large', 'Fichier trop volumineux.'));
+                req.destroy();
+                return;
+            }
+            chunks.push(chunk);
+        });
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', reject);
+    });
 }
 
 /** valid name, not used by another site (current: name of the site renamed) */

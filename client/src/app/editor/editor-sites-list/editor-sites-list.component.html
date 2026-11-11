@@ -19,6 +19,7 @@
                 <button mat-menu-item (click)="onConfigureHistory(site)" *ngIf="site.name === currentSite">{{'editor.sites-history-menu' | translate}}</button>
                 <button mat-menu-item (click)="onOpenSupervision(site)">{{'editor.sites-open-supervision' | translate}}</button>
                 <button mat-menu-item (click)="onOpenApi(site)">{{'editor.sites-open-api' | translate}}</button>
+                <button mat-menu-item (click)="onExportSite(site)" [disabled]="site.busy">{{'editor.sites-export' | translate}}</button>
                 <!-- the site open in this editor is managed from the editor of another site or of the main project -->
                 <ng-container *ngIf="site.name !== currentSite">
                     <mat-divider></mat-divider>
@@ -54,4 +55,5 @@
     <div *ngIf="!loading && !sites.length && !error" class="site-empty">{{'editor.sites-empty' | translate}}</div>
     <div *ngIf="error" class="site-empty site-error">{{error | translate}}</div>
     <div *ngIf="creating" class="site-empty">{{'editor.sites-creating' | translate}}</div>
+    <div *ngIf="importing" class="site-empty">{{'editor.sites-importing' | translate}}</div>
 </div>

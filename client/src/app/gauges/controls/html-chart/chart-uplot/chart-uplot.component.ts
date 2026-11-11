@@ -14,6 +14,9 @@ import { ScriptService } from '../../../../_services/script.service';
 import { ProjectService } from '../../../../_services/project.service';
 import { ScriptParam, ScriptParamType } from '../../../../_models/script';
 import { HmiService } from '../../../../_services/hmi.service';
+import { HttpClient } from '@angular/common/http';
+import { ToastrService } from 'ngx-toastr';
+import { EndPointApi } from '../../../../_helpers/endpointapi';
 
 @Component({
     selector: 'chart-uplot',
@@ -51,12 +54,139 @@ export class ChartUplotComponent implements OnInit, AfterViewInit, OnDestroy {
         return merge(this.daqCancel$, this.destroy$);
     }
 
+    /** an export (Excel, PDF) is running */
+    exporting = false;
+
     constructor(
         private projectService: ProjectService,
         private hmiService: HmiService,
         private scriptService: ScriptService,
         public dialog: MatDialog,
-        private translateService: TranslateService) {
+        private translateService: TranslateService,
+        private http: HttpClient,
+        private toastr: ToastrService) {
+    }
+
+    /**
+     * custom-SCADA: export of the period shown by the chart (the zoomed period after a zoom with the mouse)
+     * Excel and PDF are made by the server (/api/export), the picture (PNG) in the browser
+     */
+    onExport(kind: 'xlsx' | 'png' | 'pdf') {
+        const u = this.nguplot?.uplot;
+        if (!u?.data?.length) {
+            return;
+        }
+        const from = (u.scales.x?.min ?? this.range.from / 1e3) * 1e3;
+        const to = (u.scales.x?.max ?? this.range.to / 1e3) * 1e3;
+        const title = this.options?.title && this.options.title !== 'Title' ? this.options.title : (this.chartName || 'Courbes');
+        const subtitle = `${this.translateService.instant('chart.export-period')} ${ChartUplotComponent.dateText(from)} - ${ChartUplotComponent.dateText(to)}`;
+        const series = [];
+        const legend: { label: string, color: string }[] = [];
+        for (let i = 1; i < u.series.length; i++) {
+            const serie = u.series[i];
+            const values = [];
+            const ys = u.data[i] || [];
+            u.data[0].forEach((x: number, k: number) => {
+                const t = x * 1e3;
+                if (t >= from && t <= to && ys[k] !== null && ys[k] !== undefined) {
+                    values.push({ t, v: ys[k] });
+                }
+            });
+            const label = String(serie.label || `Courbe ${i}`);
+            series.push({ label, values });
+            legend.push({ label, color: ChartUplotComponent.serieColor(u, i) });
+        }
+        const d = new Date(from);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const fileName = `${title}_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`
+            .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9_-]+/g, '_');
+        if (kind === 'png') {
+            this.chartPicture(u, title, subtitle, legend).toBlob(blob => ChartUplotComponent.download(blob, `${fileName}.png`), 'image/png');
+            return;
+        }
+        const body: any = { title, subtitle, fileName, tzOffset: new Date().getTimezoneOffset(), series };
+        if (kind === 'pdf') {
+            body.image = this.chartPicture(u, '', '', legend).toDataURL('image/jpeg', 0.92);
+        }
+        this.exporting = true;
+        this.http.post(`${EndPointApi.getURL()}/api/export/${kind}`, body, { responseType: 'blob' }).subscribe({
+            next: blob => {
+                this.exporting = false;
+                ChartUplotComponent.download(blob, `${fileName}.${kind}`);
+            },
+            error: err => {
+                this.exporting = false;
+                console.error(err);
+                this.toastr.error(this.translateService.instant('chart.export-error'));
+            }
+        });
+    }
+
+    /** picture of the chart (canvas of uPlot) with a white background, its title and its legend */
+    private chartPicture(u: any, title: string, subtitle: string, legend: { label: string, color: string }[]): HTMLCanvasElement {
+        const source: HTMLCanvasElement = u.ctx.canvas;
+        const ratio = source.width / (source.clientWidth || source.width);
+        const w = source.clientWidth || source.width, h = source.clientHeight || source.height;
+        const head = (title ? 30 : 0) + (subtitle ? 20 : 0) + 26;
+        const out = document.createElement('canvas');
+        out.width = w * ratio;
+        out.height = (h + head + 8) * ratio;
+        const ctx = out.getContext('2d');
+        ctx.scale(ratio, ratio);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h + head + 8);
+        let y = 8;
+        if (title) {
+            ctx.fillStyle = '#1f3864';
+            ctx.font = 'bold 18px Arial';
+            ctx.fillText(title, 10, y + 18);
+            y += 30;
+        }
+        if (subtitle) {
+            ctx.fillStyle = '#555555';
+            ctx.font = '13px Arial';
+            ctx.fillText(subtitle, 10, y + 13);
+            y += 20;
+        }
+        ctx.font = '12px Arial';
+        let x = 10;
+        legend.forEach(l => {
+            ctx.fillStyle = l.color;
+            ctx.fillRect(x, y + 6, 22, 4);
+            ctx.fillStyle = '#222222';
+            ctx.fillText(l.label, x + 28, y + 12);
+            x += 40 + ctx.measureText(l.label).width;
+        });
+        ctx.drawImage(source, 0, head, w, h);
+        return out;
+    }
+
+    private static serieColor(u: any, index: number): string {
+        try {
+            const stroke = u.series[index]._stroke ?? u.series[index].stroke;
+            const color = typeof stroke === 'function' ? stroke(u, index) : stroke;
+            return typeof color === 'string' ? color : '#1565C0';
+        } catch (err) {
+            return '#1565C0';
+        }
+    }
+
+    private static dateText(ms: number): string {
+        const d = new Date(ms);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    private static download(blob: Blob, name: string) {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            URL.revokeObjectURL(a.href);
+            a.remove();
+        }, 1000);
     }
 
     ngOnInit() {

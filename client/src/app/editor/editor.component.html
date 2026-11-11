@@ -62,6 +62,9 @@
                         <mat-icon aria-label="Add" matTooltip="{{'editor.sites-add' | translate}}" *ngIf="panelsState.panelSites" class="leftbar-edit-btn"
                             (click)="sitesList.onAddSite();$event.stopPropagation()">create_new_folder
                         </mat-icon>
+                        <mat-icon aria-label="Import" matTooltip="{{'editor.sites-import' | translate}}" *ngIf="panelsState.panelSites" class="leftbar-edit-btn"
+                            (click)="sitesList.onImportSite();$event.stopPropagation()">drive_folder_upload
+                        </mat-icon>
                         <mat-icon aria-label="Refresh" matTooltip="{{'editor.sites-refresh' | translate}}" *ngIf="panelsState.panelSites" class="leftbar-edit-btn"
                             (click)="sitesList.load();$event.stopPropagation()">refresh
                         </mat-icon>

@@ -469,6 +469,8 @@ if (!process.env.FUXA_SITE) {
     // instance of a site: API of the site (tags, values, history) under /site/<name>/api/site
     app.use(BASE_PATH + '/api/site', require('./runtime/sites/api').router(runtime, settings, process.env.FUXA_SITE));
 }
+// custom-SCADA: export of the curves (Excel, PDF), in the main FUXA and in the sites
+app.use(BASE_PATH + '/api/export', require('./runtime/sites/export').router(settings));
 
 if (indexHtmlCache) {
     const serveShell = (req, res) => res.type('html').send(indexHtmlCache);

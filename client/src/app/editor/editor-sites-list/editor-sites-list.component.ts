@@ -47,6 +47,7 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
     currentSite: string = EditorSitesListComponent.getCurrentSite();
     loading = false;
     creating = false;
+    importing = false;
     error = '';
 
     constructor(private http: HttpClient,
@@ -208,6 +209,90 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
         dialogRef.afterClosed().subscribe(result => {
             if (result?.name) {
                 this.createSite(result.name.trim());
+            }
+        });
+    }
+
+    /** the folder of the site (project, connections, history, HTML files) in a .zip file */
+    onExportSite(site: SiteInfo) {
+        site.busy = true;
+        this.toastr.info(this.translateService.instant('editor.sites-exporting', { name: site.name }));
+        this.http.get(`${EndPointApi.getURL()}/api/sites/${encodeURIComponent(site.name)}/export`, { responseType: 'blob' }).subscribe({
+            next: blob => {
+                site.busy = false;
+                const date = new Date();
+                const pad = (n: number) => String(n).padStart(2, '0');
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `Site_${site.name}_${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => {
+                    URL.revokeObjectURL(a.href);
+                    a.remove();
+                }, 1000);
+            },
+            error: () => {
+                site.busy = false;
+                this.toastr.error(this.translateService.instant('editor.sites-export-error'));
+            }
+        });
+    }
+
+    /** new site from the .zip file of an exported site (its name can be changed) */
+    onImportSite() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.zip,application/zip';
+        input.onchange = () => {
+            const file = input.files?.[0];
+            if (!file) {
+                return;
+            }
+            // Site_<name>_<date>.zip -> <name>
+            let name = file.name.replace(/\.zip$/i, '').replace(/^Site_/, '').replace(/_\d{8}$/, '').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40);
+            const names = this.sites.map(s => s.name.toLowerCase());
+            if (names.includes(name.toLowerCase())) {
+                let i = 2;
+                while (names.includes(`${name}_${i}`.toLowerCase())) {
+                    i++;
+                }
+                name = `${name}_${i}`;
+            }
+            const dialogRef = this.dialog.open(EditNameComponent, {
+                disableClose: true,
+                position: { top: '60px' },
+                data: <EditNameData>{
+                    title: this.translateService.instant('editor.sites-import-title', { file: file.name }),
+                    label: this.translateService.instant('editor.sites-new-name'),
+                    name,
+                    exist: this.sites.map(s => s.name),
+                    error: this.translateService.instant('editor.sites-new-exists'),
+                    validator: (value: string) => EditorSitesListComponent.siteNameRegex.test(value || '')
+                }
+            });
+            dialogRef.afterClosed().subscribe(result => {
+                if (result?.name) {
+                    this.importSite(result.name.trim(), file);
+                }
+            });
+        };
+        input.click();
+    }
+
+    private importSite(name: string, file: File) {
+        this.importing = true;
+        this.http.post<SiteInfo>(`${EndPointApi.getURL()}/api/sites?import=${encodeURIComponent(name)}`, file,
+                                 { headers: { 'Content-Type': 'application/zip' } }).subscribe({
+            next: site => {
+                this.importing = false;
+                this.expanded[site.name] = true;
+                this.toastr.success(this.translateService.instant('editor.sites-imported', { name: site.name }));
+                this.load();
+            },
+            error: err => {
+                this.importing = false;
+                this.toastr.error(err?.error?.message || this.translateService.instant('editor.sites-import-error'));
             }
         });
     }

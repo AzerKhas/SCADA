@@ -301,13 +301,27 @@ function curvesLive() {
     return `<section>
   <h2>Courbes (données de l'API du site)</h2>
   ${periodControls()}
+  <div class="period">
+    <button id="zoom-back" style="display:none">&#8634; Annuler le zoom</button>
+    <span class="status">Zoom : sélectionner une période sur le graphique avec la souris.</span>
+    <span style="flex:1"></span>
+    <span class="status">Exporter la période affichée :</span>
+    <button id="export-xlsx">Excel</button><button id="export-png">Image</button><button id="export-pdf">PDF</button>
+  </div>
   <div id="legend" class="legend"></div>
-  <canvas id="chart" class="chart"></canvas>
+  <div style="position:relative"><canvas id="chart" class="chart"></canvas></div>
 </section>
 <script src="site-api.js"></script>
 <script>
-  var curves = [];
-  window.loadData = function (from, to) {
+  var curves = [], last = null, zooms = [];
+  var siteName = ${JSON.stringify(siteName).replace(/</g, '\\u003c')};
+  function label(s) {
+    var c = curves.find(function (x) { return x.tagId === s.id; }) || {};
+    return { label: c.label || s.name, color: c.color || '#1565C0', axis: c.axis || 'gauche' };
+  }
+  window.loadData = function (from, to, keepZoom) {
+    if (!keepZoom) { zooms = []; }
+    document.getElementById('zoom-back').style.display = zooms.length ? '' : 'none';
     setStatus('Chargement...');
     SiteApi.info().then(function (info) {
       curves = info.curves;
@@ -316,14 +330,64 @@ function curvesLive() {
       }
       return SiteApi.history({ tags: curves.map(function (c) { return c.tagId; }), from: from, to: to });
     }).then(function (data) {
+      last = data;
       document.getElementById('legend').innerHTML = data.series.map(function (s) {
-        var c = curves.find(function (x) { return x.tagId === s.id; }) || {};
-        return '<span><i style="background:' + (c.color || '#1565C0') + '"></i>' + (c.label || s.name) + ' (' + (c.axis || 'gauche') + ', ' + s.count + ' valeurs)</span>';
+        var l = label(s);
+        return '<span><i style="background:' + l.color + '"></i>' + l.label + ' (' + l.axis + ', ' + s.count + ' valeurs)</span>';
       }).join('');
       SiteApi.drawChart(document.getElementById('chart'), data, curves);
       setStatus(data.series.reduce(function (n, s) { return n + s.count; }, 0) + ' valeurs, source : ' + data.source);
     }).catch(function (err) { setStatus(err.message, true); });
   };
+  function period() {
+    return 'Période du ' + SiteApi.formatDate(last.from, true) + ' au ' + SiteApi.formatDate(last.to, true);
+  }
+  function showPeriod(from, to) {
+    document.getElementById('from').value = SiteApi.inputValue(from);
+    document.getElementById('to').value = SiteApi.inputValue(to);
+  }
+  SiteApi.enableZoom(document.getElementById('chart'), function (from, to) {
+    if (!last) { return; }
+    zooms.push({ from: last.from, to: last.to });
+    showPeriod(from, to);
+    window.loadData(from, to, true);
+  });
+  document.getElementById('zoom-back').addEventListener('click', function () {
+    var z = zooms.pop();
+    if (z) {
+      showPeriod(z.from, z.to);
+      window.loadData(z.from, z.to, true);
+    }
+  });
+  function fileName(ext) {
+    var d = new Date(last.from);
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return 'Courbes_' + siteName + '_' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.' + ext;
+  }
+  function legend() {
+    return last.series.map(function (s) { var l = label(s); return { label: l.label, color: l.color }; });
+  }
+  /** all the values of the period (not reduced like the chart), for the files */
+  function exportData(kind) {
+    if (!last) { return; }
+    setStatus('Préparation du fichier ' + kind.toUpperCase() + '...');
+    var full = SiteApi.history({ tags: curves.map(function (c) { return c.tagId; }), from: last.from, to: last.to, maxPoints: 200000 });
+    full.then(function (data) {
+      var body = { title: 'Courbes - ' + siteName, subtitle: period(), fileName: fileName(kind).replace(/[.][a-z]+$/, ''),
+        series: data.series.map(function (s) { return { label: label(s).label, values: s.values }; }) };
+      if (kind === 'pdf') {
+        body.image = SiteApi.chartPicture(document.getElementById('chart'), '', '', legend()).toDataURL('image/jpeg', 0.92);
+      }
+      return SiteApi.exportFile(kind, body, fileName(kind));
+    }).then(function () { setStatus('Fichier ' + kind.toUpperCase() + ' créé.'); })
+      .catch(function (err) { setStatus(err.message, true); });
+  }
+  document.getElementById('export-xlsx').addEventListener('click', function () { exportData('xlsx'); });
+  document.getElementById('export-pdf').addEventListener('click', function () { exportData('pdf'); });
+  document.getElementById('export-png').addEventListener('click', function () {
+    if (!last) { return; }
+    SiteApi.savePicture(SiteApi.chartPicture(document.getElementById('chart'), 'Courbes - ' + siteName, period(), legend()), fileName('png'));
+  });
 </script>`;
 }
 

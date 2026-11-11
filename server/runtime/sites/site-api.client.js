@@ -150,6 +150,8 @@
         }
         ctx.strokeStyle = '#888';
         ctx.strokeRect(margin.left, margin.top, plotW, plotH);
+        // area of the curves, for the zoom with the mouse
+        canvas._chart = { from: from, to: to, left: margin.left, top: margin.top, width: plotW, height: plotH };
         // curves
         lines.forEach(function (l) {
             ctx.strokeStyle = l.color;
@@ -194,6 +196,122 @@
         return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     }
 
+    /**
+     * zoom with the mouse: the user selects a period on the chart (drag), onZoom(from, to) is called with the period (ms)
+     * the parent of the canvas must have position: relative (the selection is drawn over the canvas)
+     */
+    function enableZoom(canvas, onZoom) {
+        var box = document.createElement('div');
+        box.style.cssText = 'position:absolute;display:none;background:rgba(30,136,229,0.18);border:1px solid #1e88e5;pointer-events:none';
+        canvas.parentNode.appendChild(box);
+        canvas.style.cursor = 'crosshair';
+        var start = null;
+        function offset(e) {
+            var r = canvas.getBoundingClientRect();
+            return { x: e.clientX - r.left, y: e.clientY - r.top, r: r };
+        }
+        function clamp(c, x) {
+            return Math.min(Math.max(x, c.left), c.left + c.width);
+        }
+        canvas.addEventListener('mousedown', function (e) {
+            var c = canvas._chart, p = offset(e);
+            if (!c || e.button !== 0 || p.x < c.left || p.x > c.left + c.width) { return; }
+            start = p.x;
+            box.style.left = (canvas.offsetLeft + p.x) + 'px';
+            box.style.top = (canvas.offsetTop + c.top) + 'px';
+            box.style.height = c.height + 'px';
+            box.style.width = '0px';
+            box.style.display = 'block';
+            e.preventDefault();
+        });
+        window.addEventListener('mousemove', function (e) {
+            if (start === null) { return; }
+            var c = canvas._chart, x = clamp(c, offset(e).x);
+            box.style.left = (canvas.offsetLeft + Math.min(start, x)) + 'px';
+            box.style.width = Math.abs(x - start) + 'px';
+        });
+        window.addEventListener('mouseup', function (e) {
+            if (start === null) { return; }
+            var c = canvas._chart, x = clamp(c, offset(e).x);
+            var x1 = Math.min(start, x), x2 = Math.max(start, x);
+            start = null;
+            box.style.display = 'none';
+            if (x2 - x1 < 5) { return; }
+            var t = function (px) { return Math.round(c.from + (px - c.left) / c.width * (c.to - c.from)); };
+            onZoom(t(x1), t(x2));
+        });
+    }
+
+    /**
+     * picture of the chart with its title and its legend
+     * @param legend [{ label, color }]
+     * @returns canvas (white background)
+     */
+    function chartPicture(canvas, title, subtitle, legend) {
+        var ratio = canvas.width / canvas.clientWidth;
+        var w = canvas.clientWidth, h = canvas.clientHeight;
+        var out = document.createElement('canvas');
+        var head = (title ? 30 : 0) + (subtitle ? 20 : 0) + 26;
+        out.width = w * ratio;
+        out.height = (h + head + 8) * ratio;
+        var ctx = out.getContext('2d');
+        ctx.scale(ratio, ratio);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h + head + 8);
+        var y = 8;
+        if (title) {
+            ctx.fillStyle = '#1f3864';
+            ctx.font = 'bold 18px Arial';
+            ctx.fillText(title, 10, y + 18);
+            y += 30;
+        }
+        if (subtitle) {
+            ctx.fillStyle = '#555';
+            ctx.font = '13px Arial';
+            ctx.fillText(subtitle, 10, y + 13);
+            y += 20;
+        }
+        ctx.font = '12px Arial';
+        var x = 10;
+        (legend || []).forEach(function (l) {
+            ctx.fillStyle = l.color;
+            ctx.fillRect(x, y + 6, 22, 4);
+            ctx.fillStyle = '#222';
+            ctx.fillText(l.label, x + 28, y + 12);
+            x += 40 + ctx.measureText(l.label).width;
+        });
+        ctx.drawImage(canvas, 0, head, w, h);
+        return out;
+    }
+
+    function download(blob, name) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    }
+
+    function savePicture(picture, name) {
+        picture.toBlob(function (blob) { download(blob, name); }, 'image/png');
+    }
+
+    /**
+     * Excel or PDF file made by the server (/api/export/xlsx or /pdf of the site)
+     * body: { title, subtitle, fileName, series: [{ label, values: [{ t, v }] }], image (PDF: data URL JPEG) }
+     */
+    function exportFile(kind, body, name) {
+        body.tzOffset = new Date().getTimezoneOffset();
+        var url = base.replace(/\/api\/site$/, '/api/export/') + kind;
+        return fetch(url, { method: 'POST', headers: headers(true), body: JSON.stringify(body) }).then(function (res) {
+            if (!res.ok) {
+                return res.json().then(function (b) { throw new Error(b && b.message ? b.message : 'Erreur ' + res.status); });
+            }
+            return res.blob();
+        }).then(function (blob) { download(blob, name); });
+    }
+
     window.SiteApi = {
         base: base,
         info: info,
@@ -201,6 +319,10 @@
         history: history,
         saveCurves: saveCurves,
         drawChart: drawChart,
+        enableZoom: enableZoom,
+        chartPicture: chartPicture,
+        savePicture: savePicture,
+        exportFile: exportFile,
         historyTable: historyTable,
         formatDate: formatDate,
         inputValue: inputValue

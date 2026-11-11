@@ -23,7 +23,7 @@ const CURVES_VIEW = 'v_site_courbes';
 const DEFAULT_RANGE = 8 * 3600 * 1000;
 const MAX_RANGE = 366 * 24 * 3600 * 1000;
 const MAX_TAGS = 50;
-const MAX_POINTS = 20000;
+const MAX_POINTS = 200000;
 
 function router(runtime, settings, siteName) {
     const app = express.Router();
