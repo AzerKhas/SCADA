@@ -9,6 +9,7 @@
  *                                     history between from and to (ms or ISO date), default: last 8 hours,
  *                                     tags of the page Courbes if no tags
  * PUT  /api/site/curves               choice of the tags of the page Courbes { curves: [{ tag, label, color, axis }] }
+ *                                     and type of the chart: mode 'temps' (default) or 'xy' with xTag (tag of the axis X)
  * GET  /api/site/history-config       source of the history (FUXA or PostgreSQL), without the password
  * PUT  /api/site/history-config       save the source of the history
  * POST /api/site/history-config/test  test a PostgreSQL connection (tables, columns of a table)
@@ -18,6 +19,7 @@
 
 const express = require('express');
 const history = require('./history');
+const curvesMode = require('./curves-mode');
 
 const CURVES_VIEW = 'v_site_courbes';
 const DEFAULT_RANGE = 8 * 3600 * 1000;
@@ -52,7 +54,8 @@ function router(runtime, settings, siteName) {
                 site: siteName,
                 historySource: { type: source.type, label: source.label },
                 tags: allTags(project).map(tagInfo),
-                curves: curves(project)
+                curves: curves(project),
+                chartMode: chartMode(project, settings)
             });
         } catch (err) {
             sendError(res, err);
@@ -142,6 +145,14 @@ function router(runtime, settings, siteName) {
             }
             const project = await runtime.project.getProject(null, -1);
             const all = allTags(project);
+            // type of the chart (only when given): XY needs the tag of the axis X
+            let xTag = null;
+            if (req.body.mode === 'xy') {
+                xTag = all.find(t => t.id === req.body.xTag || t.name === req.body.xTag);
+                if (!xTag) {
+                    return res.status(400).json({ error: 'invalid_x_tag', message: 'Graphique XY : choisir le tag de l\'axe X.' });
+                }
+            }
             const lines = list.map((curve, index) => {
                 const tag = all.find(t => t.id === curve.tag || t.name === curve.tag);
                 if (!tag) {
@@ -162,11 +173,15 @@ function router(runtime, settings, siteName) {
             const charts = (project.charts || []).filter(c => c.id !== chartId);
             charts.push({ id: chartId, name: (old && old.name) || 'Courbes du site', lines });
             await save(runtime, 'charts', charts);
-            // the history of a tag exists only if the tag is recorded
+            if (req.body.mode !== undefined) {
+                curvesMode.set(settings, { mode: req.body.mode, xTag: xTag ? xTag.id : null });
+            }
+            // the history of a tag exists only if the tag is recorded (tag of the axis X too)
+            const recorded = lines.map(line => line.id).concat(xTag ? [xTag.id] : []);
             for (const device of Object.values(project.devices || {})) {
                 let changed = false;
-                lines.forEach(line => {
-                    const tag = device.tags && device.tags[line.id];
+                recorded.forEach(id => {
+                    const tag = device.tags && device.tags[id];
                     if (tag && !(tag.daq && tag.daq.enabled)) {
                         tag.daq = Object.assign({ interval: 5, changed: true, restored: false }, tag.daq, { enabled: true });
                         changed = true;
@@ -176,7 +191,8 @@ function router(runtime, settings, siteName) {
                     await save(runtime, 'set-device', device);
                 }
             }
-            res.json({ site: siteName, curves: curves(await runtime.project.getProject(null, -1)) });
+            const saved = await runtime.project.getProject(null, -1);
+            res.json({ site: siteName, curves: curves(saved), chartMode: chartMode(saved, settings) });
         } catch (err) {
             sendError(res, err);
         }
@@ -248,6 +264,13 @@ function curves(project) {
     return ((chart && chart.lines) || []).map(line => ({
         tagId: line.id, name: line.name, label: line.label || line.name, color: line.color || '', axis: Number(line.yaxis) === 2 ? 'droite' : 'gauche'
     }));
+}
+
+/** type of the chart of the page Courbes: { mode: 'temps' | 'xy', xTag: { id, name } } */
+function chartMode(project, settings) {
+    const config = curvesMode.get(settings);
+    const tag = config.mode === 'xy' ? allTags(project).find(t => t.id === config.xTag) : null;
+    return tag ? { mode: 'xy', xTag: { id: tag.id, name: tag.name } } : { mode: 'temps', xTag: null };
 }
 
 /** ms, or a date (ISO, 2026-11-09T08:00) */

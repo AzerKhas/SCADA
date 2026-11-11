@@ -303,7 +303,7 @@ function curvesLive() {
   ${periodControls()}
   <div class="period">
     <button id="zoom-back" style="display:none">&#8634; Annuler le zoom</button>
-    <span class="status">Zoom : sélectionner une période sur le graphique avec la souris.</span>
+    <span class="status" id="zoom-help">Zoom : sélectionner une période sur le graphique avec la souris.</span>
     <span style="flex:1"></span>
     <span class="status">Exporter la période affichée :</span>
     <button id="export-xlsx">Excel</button><button id="export-png">Image</button><button id="export-pdf">PDF</button>
@@ -313,34 +313,68 @@ function curvesLive() {
 </section>
 <script src="site-api.js"></script>
 <script>
-  var curves = [], last = null, zooms = [];
+  var curves = [], last = null, zooms = [], mode = { mode: 'temps', xTag: null }, xy = null, xRange = null;
   var siteName = ${JSON.stringify(siteName).replace(/</g, '\\u003c')};
   function label(s) {
     var c = curves.find(function (x) { return x.tagId === s.id; }) || {};
     return { label: c.label || s.name, color: c.color || '#1565C0', axis: c.axis || 'gauche' };
   }
+  function isXY() {
+    return mode.mode === 'xy' && mode.xTag;
+  }
+  function tagIds() {
+    var ids = curves.map(function (c) { return c.tagId; });
+    if (isXY() && ids.indexOf(mode.xTag.id) < 0) { ids.push(mode.xTag.id); }
+    return ids;
+  }
+  function showZoomBack() {
+    document.getElementById('zoom-back').style.display = zooms.length ? '' : 'none';
+  }
   window.loadData = function (from, to, keepZoom) {
     if (!keepZoom) { zooms = []; }
-    document.getElementById('zoom-back').style.display = zooms.length ? '' : 'none';
+    xRange = null;
+    showZoomBack();
     setStatus('Chargement...');
     SiteApi.info().then(function (info) {
       curves = info.curves;
+      mode = info.chartMode || { mode: 'temps', xTag: null };
       if (!curves.length) {
         throw new Error('Aucun tag choisi : éditeur, panneau Sites, menu du site, Tags des courbes.');
       }
-      return SiteApi.history({ tags: curves.map(function (c) { return c.tagId; }), from: from, to: to });
+      document.getElementById('zoom-help').textContent = isXY()
+        ? 'Graphique XY : tags en fonction de ' + mode.xTag.name + '. Zoom : sélectionner une plage de ' + mode.xTag.name + ' avec la souris.'
+        : 'Zoom : sélectionner une période sur le graphique avec la souris.';
+      return SiteApi.history({ tags: tagIds(), from: from, to: to, maxPoints: isXY() ? 20000 : 2000 });
     }).then(function (data) {
       last = data;
-      document.getElementById('legend').innerHTML = data.series.map(function (s) {
-        var l = label(s);
-        return '<span><i style="background:' + l.color + '"></i>' + l.label + ' (' + l.axis + ', ' + s.count + ' valeurs)</span>';
-      }).join('');
-      SiteApi.drawChart(document.getElementById('chart'), data, curves);
+      draw();
       setStatus(data.series.reduce(function (n, s) { return n + s.count; }, 0) + ' valeurs, source : ' + data.source);
     }).catch(function (err) { setStatus(err.message, true); });
   };
+  function draw() {
+    var canvas = document.getElementById('chart');
+    if (isXY()) {
+      xy = SiteApi.pairXY(last, mode.xTag.id);
+      var counts = SiteApi.drawXY(canvas, xy, curves, mode.xTag.name, xRange);
+      document.getElementById('legend').innerHTML = xy.map(function (s, i) {
+        var l = label(s);
+        return '<span><i style="background:' + l.color + '"></i>' + l.label + ' (' + l.axis + ', ' + counts[i] + ' points)</span>';
+      }).join('') + '<span>axe X : ' + mode.xTag.name + '</span>';
+    } else {
+      xy = null;
+      document.getElementById('legend').innerHTML = last.series.map(function (s) {
+        var l = label(s);
+        return '<span><i style="background:' + l.color + '"></i>' + l.label + ' (' + l.axis + ', ' + s.count + ' valeurs)</span>';
+      }).join('');
+      SiteApi.drawChart(canvas, last, curves);
+    }
+  }
   function period() {
-    return 'Période du ' + SiteApi.formatDate(last.from, true) + ' au ' + SiteApi.formatDate(last.to, true);
+    var text = 'Période du ' + SiteApi.formatDate(last.from, true) + ' au ' + SiteApi.formatDate(last.to, true);
+    if (isXY()) {
+      text = 'En fonction de ' + mode.xTag.name + (xRange ? ' (de ' + xRange.min.toPrecision(4) + ' à ' + xRange.max.toPrecision(4) + ')' : '') + ' - ' + text;
+    }
+    return text;
   }
   function showPeriod(from, to) {
     document.getElementById('from').value = SiteApi.inputValue(from);
@@ -348,33 +382,66 @@ function curvesLive() {
   }
   SiteApi.enableZoom(document.getElementById('chart'), function (from, to) {
     if (!last) { return; }
+    if (isXY()) {
+      // XY: zoom on a range of the axis X, with the same data
+      zooms.push({ xRange: xRange });
+      xRange = { min: from, max: to };
+      showZoomBack();
+      draw();
+      return;
+    }
+    from = Math.round(from);
+    to = Math.round(to);
     zooms.push({ from: last.from, to: last.to });
     showPeriod(from, to);
     window.loadData(from, to, true);
   });
   document.getElementById('zoom-back').addEventListener('click', function () {
     var z = zooms.pop();
-    if (z) {
-      showPeriod(z.from, z.to);
-      window.loadData(z.from, z.to, true);
+    if (!z) { return; }
+    if (isXY()) {
+      xRange = z.xRange;
+      showZoomBack();
+      draw();
+      return;
     }
+    showPeriod(z.from, z.to);
+    window.loadData(z.from, z.to, true);
   });
   function fileName(ext) {
     var d = new Date(last.from);
     var p = function (n) { return (n < 10 ? '0' : '') + n; };
-    return 'Courbes_' + siteName + '_' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.' + ext;
+    return (isXY() ? 'Courbes_XY_' : 'Courbes_') + siteName + '_' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.' + ext;
+  }
+  function title() {
+    return (isXY() ? 'Courbes XY - ' : 'Courbes - ') + siteName;
   }
   function legend() {
-    return last.series.map(function (s) { var l = label(s); return { label: l.label, color: l.color }; });
+    return (xy || last.series).map(function (s) { var l = label(s); return { label: l.label, color: l.color }; });
   }
-  /** all the values of the period (not reduced like the chart), for the files */
+  /**
+   * series of the files: all the values of the period (not reduced like the chart)
+   * XY: the tag X (its value at the time of each point) then the tags Y, only the points of the zoomed range
+   */
+  function fileSeries(data) {
+    if (!isXY()) {
+      return data.series.map(function (s) { return { label: label(s).label, values: s.values }; });
+    }
+    var pairs = SiteApi.pairXY(data, mode.xTag.id);
+    var inRange = function (pt) { return !xRange || (pt.x >= xRange.min && pt.x <= xRange.max); };
+    var xValues = {};
+    pairs.forEach(function (s) { s.points.filter(inRange).forEach(function (pt) { xValues[pt.t] = pt.x; }); });
+    var xSeries = { label: mode.xTag.name + ' (axe X)', values: Object.keys(xValues).map(function (t) { return { t: Number(t), v: xValues[t] }; }) };
+    return [xSeries].concat(pairs.map(function (s) {
+      return { label: label(s).label, values: s.points.filter(inRange).map(function (pt) { return { t: pt.t, v: pt.y }; }) };
+    }));
+  }
   function exportData(kind) {
     if (!last) { return; }
     setStatus('Préparation du fichier ' + kind.toUpperCase() + '...');
-    var full = SiteApi.history({ tags: curves.map(function (c) { return c.tagId; }), from: last.from, to: last.to, maxPoints: 200000 });
+    var full = SiteApi.history({ tags: tagIds(), from: last.from, to: last.to, maxPoints: 200000 });
     full.then(function (data) {
-      var body = { title: 'Courbes - ' + siteName, subtitle: period(), fileName: fileName(kind).replace(/[.][a-z]+$/, ''),
-        series: data.series.map(function (s) { return { label: label(s).label, values: s.values }; }) };
+      var body = { title: title(), subtitle: period(), fileName: fileName(kind).replace(/[.][a-z]+$/, ''), series: fileSeries(data) };
       if (kind === 'pdf') {
         body.image = SiteApi.chartPicture(document.getElementById('chart'), '', '', legend()).toDataURL('image/jpeg', 0.92);
       }
@@ -386,7 +453,7 @@ function curvesLive() {
   document.getElementById('export-pdf').addEventListener('click', function () { exportData('pdf'); });
   document.getElementById('export-png').addEventListener('click', function () {
     if (!last) { return; }
-    SiteApi.savePicture(SiteApi.chartPicture(document.getElementById('chart'), 'Courbes - ' + siteName, period(), legend()), fileName('png'));
+    SiteApi.savePicture(SiteApi.chartPicture(document.getElementById('chart'), title(), period(), legend()), fileName('png'));
   });
 </script>`;
 }
@@ -487,9 +554,12 @@ function curvesSection(project, views) {
     const allTags = {};
     Object.values(project.devices || {}).forEach(device => Object.values(device.tags || {}).forEach(tag => allTags[tag.id] = { device, tag }));
     const lines = (chart && chart.lines) || [];
+    const mode = chartMode();
+    const xTag = mode.mode === 'xy' && allTags[mode.xTag] ? allTags[mode.xTag].tag.name : null;
     return `<section>
   <h2>Tags des courbes (page Courbes)</h2>
   <p class="info">Tags affichés par le graphique de la page Courbes. La période est choisie avec le calendrier du graphique.</p>
+  <p><b>Type de graphique :</b> ${xTag ? `XY : tags ci-dessous (axe Y) en fonction de ${esc(xTag)} (axe X)` : 'en fonction du temps'}</p>
   ${table(['Libellé', 'Tag', 'Connexion', 'Couleur', 'Axe', 'Enregistré (historique)'], lines.map(line => {
         const found = allTags[line.id];
         return [line.label || line.name, found ? found.tag.name : line.name || line.id, found ? found.device.name : line.device || '',
@@ -500,6 +570,16 @@ function curvesSection(project, views) {
 </section>`;
 }
 
+/** type of the chart of courbes.html (curves-mode.js): { mode: 'temps' | 'xy', xTag: id } */
+function chartMode() {
+    try {
+        const config = JSON.parse(fs.readFileSync(path.join(siteDir, '_appdata', 'courbes-mode.json'), 'utf8'));
+        return config.mode === 'xy' && config.xTag ? config : { mode: 'temps', xTag: null };
+    } catch (err) {
+        return { mode: 'temps', xTag: null };
+    }
+}
+
 /**
  * choice of the tags of the page Courbes in configuration.html: list of the tags of the site (API info),
  * saved with the API (PUT curves); the file is written again by the server after the save
@@ -507,6 +587,15 @@ function curvesSection(project, views) {
 function curvesEditor() {
     return `<h3>Choisir les tags des courbes</h3>
 <p class="info">Cochez les tags à afficher dans la page Courbes : chaque changement est enregistré automatiquement. Les tags choisis sont enregistrés (historique) à partir de ce moment.</p>
+<div class="period">
+  <label>Type de graphique
+    <select id="curves-mode">
+      <option value="temps">En fonction du temps</option>
+      <option value="xy">XY : tags cochés (axe Y) en fonction d'un tag (axe X)</option>
+    </select>
+  </label>
+  <label id="curves-xtag-box" style="display:none">Tag de l'axe X <select id="curves-xtag"></select></label>
+</div>
 <div class="period">
   <input id="curves-filter" placeholder="Rechercher un tag" size="30">
   <button id="curves-save" class="primary">Enregistrer</button>
@@ -519,6 +608,10 @@ function curvesEditor() {
   (function () {
     var colors = ['#1565C0', '#E65100', '#2E7D32', '#C62828', '#6A1B9A', '#00838F', '#F9A825', '#4E342E', '#AD1457', '#37474F'];
     var rows = [];
+    var modeSelect = document.getElementById('curves-mode'), xSelect = document.getElementById('curves-xtag');
+    function showMode() {
+      document.getElementById('curves-xtag-box').style.display = modeSelect.value === 'xy' ? '' : 'none';
+    }
     function status(text, error) {
       var s = document.getElementById('curves-status');
       s.textContent = text;
@@ -551,7 +644,14 @@ function curvesEditor() {
         var free = colors.filter(function (c) { return used.indexOf(c.toLowerCase()) < 0; });
         rows.filter(function (r) { return !r.selected; }).forEach(function (r, i) { if (free.length) { r.color = free[i % free.length]; } });
         render();
-        status(info.curves.length + ' tag(s) choisi(s)');
+        xSelect.innerHTML = '<option value="">(choisir)</option>' + info.tags.map(function (t) {
+          return '<option value="' + escapeHtml(t.id) + '">' + escapeHtml(t.name) + ' (' + escapeHtml(t.device) + ')</option>';
+        }).join('');
+        var mode = info.chartMode || { mode: 'temps' };
+        modeSelect.value = mode.mode === 'xy' ? 'xy' : 'temps';
+        xSelect.value = mode.xTag ? mode.xTag.id : '';
+        showMode();
+        status(info.curves.length + ' tag(s) choisi(s)' + (mode.mode === 'xy' ? ', graphique XY' : ''));
       }).catch(function (err) { status(err.message, true); });
     }
     // each change is saved (short delay: several boxes checked quickly give one save)
@@ -567,10 +667,15 @@ function curvesEditor() {
       var curves = rows.filter(function (r) { return r.selected; }).map(function (r) {
         return { tag: r.tag, label: r.label, color: r.color, axis: r.axis };
       });
+      if (modeSelect.value === 'xy' && !xSelect.value) {
+        status('Graphique XY : choisir le tag de l’axe X.', true);
+        return;
+      }
       saving = true;
       status('Enregistrement...');
-      SiteApi.saveCurves(curves).then(function (result) {
-        status('Enregistré : ' + result.curves.length + ' tag(s) dans la page Courbes.');
+      SiteApi.saveCurves(curves, { mode: modeSelect.value, xTag: xSelect.value }).then(function (result) {
+        status('Enregistré : ' + result.curves.length + ' tag(s) dans la page Courbes' +
+          (result.chartMode && result.chartMode.mode === 'xy' ? ', en fonction de ' + result.chartMode.xTag.name + '.' : '.'));
       }).catch(function (err) {
         status('Non enregistré : ' + err.message, true);
       }).then(function () {
@@ -590,6 +695,8 @@ function curvesEditor() {
       if (i !== null && f === 'label') { rows[i].label = e.target.value; }
     });
     document.getElementById('curves-filter').addEventListener('input', render);
+    modeSelect.addEventListener('change', function () { showMode(); schedule(); });
+    xSelect.addEventListener('change', schedule);
     document.getElementById('curves-save').addEventListener('click', function () { clearTimeout(timer); save(); });
     load();
   })();

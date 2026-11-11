@@ -69,8 +69,14 @@
         });
     }
 
-    function saveCurves(curves) {
-        return fetch(base + '/curves', { method: 'PUT', headers: headers(true), body: JSON.stringify({ curves: curves }) }).then(answer);
+    /** chartMode (optional): { mode: 'temps' | 'xy', xTag: tag of the axis X } */
+    function saveCurves(curves, chartMode) {
+        var body = { curves: curves };
+        if (chartMode) {
+            body.mode = chartMode.mode;
+            body.xTag = chartMode.xTag;
+        }
+        return fetch(base + '/curves', { method: 'PUT', headers: headers(true), body: JSON.stringify(body) }).then(answer);
     }
 
     function pad(n) {
@@ -165,6 +171,106 @@
         });
     }
 
+    /**
+     * XY: each value of a tag Y gets the value of the tag X at the same time
+     * (last value of X recorded before, the tags are not recorded at the same instants)
+     * @returns [{ id, name, points: [{ x, y, t }] }] for each tag Y
+     */
+    function pairXY(data, xId) {
+        var xSeries = data.series.filter(function (s) { return s.id === xId; })[0];
+        var xs = xSeries ? numbers(xSeries) : [];
+        return data.series.filter(function (s) { return s.id !== xId; }).map(function (s) {
+            var points = [], k = -1;
+            numbers(s).forEach(function (p) {
+                while (k + 1 < xs.length && xs[k + 1].t <= p.t) { k++; }
+                if (k >= 0) { points.push({ x: xs[k].v, y: p.v, t: p.t }); }
+            });
+            return { id: s.id, name: s.name, points: points };
+        });
+    }
+
+    /**
+     * XY chart: points (x, y) of each tag Y, axis Y left / right from the configuration of the curves
+     * xRange { min, max } (zoom) or null: all the points
+     */
+    function drawXY(canvas, lines, curves, xLabel, xRange) {
+        var ctx = canvas.getContext('2d');
+        var ratio = window.devicePixelRatio || 1;
+        var width = canvas.clientWidth, height = canvas.clientHeight;
+        canvas.width = width * ratio;
+        canvas.height = height * ratio;
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+        var margin = { left: 60, right: 60, top: 14, bottom: 44 };
+        var plotW = width - margin.left - margin.right, plotH = height - margin.top - margin.bottom;
+        var config = {};
+        (curves || []).forEach(function (c) { config[c.tagId] = c; });
+        var xMin = Infinity, xMax = -Infinity;
+        lines.forEach(function (l) { l.points.forEach(function (p) { xMin = Math.min(xMin, p.x); xMax = Math.max(xMax, p.x); }); });
+        if (xRange) { xMin = xRange.min; xMax = xRange.max; }
+        if (xMin === Infinity) { xMin = 0; xMax = 1; }
+        if (xMin === xMax) { xMin -= 1; xMax += 1; }
+        if (!xRange) { var px = (xMax - xMin) * 0.03; xMin -= px; xMax += px; }
+        var axes = { gauche: { min: Infinity, max: -Infinity }, droite: { min: Infinity, max: -Infinity } };
+        var drawn = lines.map(function (l, i) {
+            var c = config[l.id] || {};
+            var axis = c.axis === 'droite' ? 'droite' : 'gauche';
+            var points = l.points.filter(function (p) { return p.x >= xMin && p.x <= xMax; });
+            points.forEach(function (p) {
+                axes[axis].min = Math.min(axes[axis].min, p.y);
+                axes[axis].max = Math.max(axes[axis].max, p.y);
+            });
+            return { points: points, axis: axis, color: c.color || ['#1565C0', '#E65100', '#2E7D32', '#C62828', '#6A1B9A'][i % 5] };
+        });
+        Object.keys(axes).forEach(function (k) {
+            var a = axes[k];
+            if (a.min === Infinity) { a.min = 0; a.max = 1; }
+            if (a.min === a.max) { a.min -= 1; a.max += 1; }
+            var pad = (a.max - a.min) * 0.05;
+            a.min -= pad; a.max += pad;
+        });
+        var x = function (v) { return margin.left + (v - xMin) / (xMax - xMin) * plotW; };
+        var y = function (v, axis) { var a = axes[axis]; return margin.top + plotH - (v - a.min) / (a.max - a.min) * plotH; };
+        ctx.strokeStyle = '#ddd';
+        ctx.fillStyle = '#555';
+        ctx.font = '11px Arial';
+        ctx.lineWidth = 1;
+        for (var i = 0; i <= 5; i++) {
+            var gy = margin.top + plotH * i / 5;
+            ctx.beginPath(); ctx.moveTo(margin.left, gy); ctx.lineTo(margin.left + plotW, gy); ctx.stroke();
+            ctx.textAlign = 'right';
+            ctx.fillText(round(axes.gauche.max - (axes.gauche.max - axes.gauche.min) * i / 5), margin.left - 6, gy + 4);
+            if (drawn.some(function (l) { return l.axis === 'droite'; })) {
+                ctx.textAlign = 'left';
+                ctx.fillText(round(axes.droite.max - (axes.droite.max - axes.droite.min) * i / 5), margin.left + plotW + 6, gy + 4);
+            }
+        }
+        ctx.textAlign = 'center';
+        var ticks = Math.max(2, Math.min(10, Math.floor(plotW / 90)));
+        for (var j = 0; j <= ticks; j++) {
+            var v = xMin + (xMax - xMin) * j / ticks;
+            var gx = x(v);
+            ctx.beginPath(); ctx.moveTo(gx, margin.top); ctx.lineTo(gx, margin.top + plotH); ctx.stroke();
+            ctx.fillText(round(v), gx, margin.top + plotH + 16);
+        }
+        ctx.font = 'bold 12px Arial';
+        ctx.fillStyle = '#333';
+        ctx.fillText(xLabel || 'X', margin.left + plotW / 2, height - 6);
+        ctx.strokeStyle = '#888';
+        ctx.strokeRect(margin.left, margin.top, plotW, plotH);
+        drawn.forEach(function (l) {
+            ctx.fillStyle = l.color;
+            l.points.forEach(function (p) {
+                ctx.beginPath();
+                ctx.arc(x(p.x), y(p.y, l.axis), 2.2, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+        });
+        // area of the points, for the zoom with the mouse (values of the axis X)
+        canvas._chart = { from: xMin, to: xMax, left: margin.left, top: margin.top, width: plotW, height: plotH };
+        return drawn.map(function (l) { return l.points.length; });
+    }
+
     function round(v) {
         return Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2);
     }
@@ -237,7 +343,8 @@
             start = null;
             box.style.display = 'none';
             if (x2 - x1 < 5) { return; }
-            var t = function (px) { return Math.round(c.from + (px - c.left) / c.width * (c.to - c.from)); };
+            // time (ms) of a chart in function of the time, value of the axis X of a XY chart
+            var t = function (px) { return c.from + (px - c.left) / c.width * (c.to - c.from); };
             onZoom(t(x1), t(x2));
         });
     }
@@ -319,6 +426,8 @@
         history: history,
         saveCurves: saveCurves,
         drawChart: drawChart,
+        pairXY: pairXY,
+        drawXY: drawXY,
         enableZoom: enableZoom,
         chartPicture: chartPicture,
         savePicture: savePicture,
