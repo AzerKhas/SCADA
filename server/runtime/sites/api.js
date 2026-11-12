@@ -3,13 +3,14 @@
  * Each site has its own instance, so the API gives only the tags and the data of its site.
  *
  * GET  /api/site                      list of the services
- * GET  /api/site/info                 site, tags, curves (tags of the page Courbes), history source
+ * GET  /api/site/info                 site, tags, curves (tags of the page Courbes), graphs, history source
  * GET  /api/site/values?tags=a,b      current values (all the tags if no tags)
- * GET  /api/site/history?tags=a,b&from=..&to=..&maxPoints=2000
+ * GET  /api/site/history?tags=a,b&from=..&to=..&maxPoints=2000&interval=60
  *                                     history between from and to (ms or ISO date), default: last 8 hours,
- *                                     tags of the page Courbes if no tags
+ *                                     tags of the page Courbes if no tags, interval: one value (average) every n seconds
  * PUT  /api/site/curves               choice of the tags of the page Courbes { curves: [{ tag, label, color, axis }] }
- *                                     and type of the chart: mode 'temps' (default) or 'xy' with xTag (tag of the axis X)
+ * GET  /api/site/graphs               graphs of the page Courbes (graphs.js)
+ * PUT  /api/site/graphs               save the graphs { graphs: [...] }, the tags of the graphs are recorded
  * GET  /api/site/history-config       source of the history (FUXA or PostgreSQL), without the password
  * PUT  /api/site/history-config       save the source of the history
  * POST /api/site/history-config/test  test a PostgreSQL connection (tables, columns of a table)
@@ -19,7 +20,7 @@
 
 const express = require('express');
 const history = require('./history');
-const curvesMode = require('./curves-mode');
+const graphs = require('./graphs');
 
 const CURVES_VIEW = 'v_site_courbes';
 const DEFAULT_RANGE = 8 * 3600 * 1000;
@@ -55,7 +56,7 @@ function router(runtime, settings, siteName) {
                 historySource: { type: source.type, label: source.label },
                 tags: allTags(project).map(tagInfo),
                 curves: curves(project),
-                chartMode: chartMode(project, settings)
+                graphs: siteGraphs(project, settings)
             });
         } catch (err) {
             sendError(res, err);
@@ -96,12 +97,14 @@ function router(runtime, settings, siteName) {
             const curveTags = curves(project).map(line => line.tagId);
             const tags = findTags(project, req.query.tags, allTags(project).filter(tag => curveTags.includes(tag.id)));
             const maxPoints = Math.min(Math.max(parseInt(req.query.maxPoints, 10) || 2000, 10), MAX_POINTS);
+            const interval = Math.max(parseInt(req.query.interval, 10) || 0, 0) * 1000;
             const series = [];
             for (const tag of tags) {
                 const values = await source.values(tag, from, to);
-                series.push(Object.assign(tagInfo(tag), { count: values.length, values: reduce(values, maxPoints) }));
+                const sampled = interval ? sample(values, from, interval) : values;
+                series.push(Object.assign(tagInfo(tag), { count: values.length, values: reduce(sampled, maxPoints) }));
             }
-            res.json({ site: siteName, from, to, source: source.type, series });
+            res.json({ site: siteName, from, to, interval: interval / 1000, source: source.type, series });
         } catch (err) {
             sendError(res, err);
         }
@@ -145,14 +148,6 @@ function router(runtime, settings, siteName) {
             }
             const project = await runtime.project.getProject(null, -1);
             const all = allTags(project);
-            // type of the chart (only when given): XY needs the tag of the axis X
-            let xTag = null;
-            if (req.body.mode === 'xy') {
-                xTag = all.find(t => t.id === req.body.xTag || t.name === req.body.xTag);
-                if (!xTag) {
-                    return res.status(400).json({ error: 'invalid_x_tag', message: 'Graphique XY : choisir le tag de l\'axe X.' });
-                }
-            }
             const lines = list.map((curve, index) => {
                 const tag = all.find(t => t.id === curve.tag || t.name === curve.tag);
                 if (!tag) {
@@ -168,37 +163,95 @@ function router(runtime, settings, siteName) {
                     spanGaps: true
                 };
             });
-            const chartId = curvesChartId(project);
-            const old = (project.charts || []).find(c => c.id === chartId);
-            const charts = (project.charts || []).filter(c => c.id !== chartId);
-            charts.push({ id: chartId, name: (old && old.name) || 'Courbes du site', lines });
-            await save(runtime, 'charts', charts);
-            if (req.body.mode !== undefined) {
-                curvesMode.set(settings, { mode: req.body.mode, xTag: xTag ? xTag.id : null });
-            }
-            // the history of a tag exists only if the tag is recorded (tag of the axis X too)
-            const recorded = lines.map(line => line.id).concat(xTag ? [xTag.id] : []);
-            for (const device of Object.values(project.devices || {})) {
-                let changed = false;
-                recorded.forEach(id => {
-                    const tag = device.tags && device.tags[id];
-                    if (tag && !(tag.daq && tag.daq.enabled)) {
-                        tag.daq = Object.assign({ interval: 5, changed: true, restored: false }, tag.daq, { enabled: true });
-                        changed = true;
-                    }
-                });
-                if (changed) {
-                    await save(runtime, 'set-device', device);
-                }
-            }
+            await saveChart(runtime, project, lines);
+            // the history of a tag exists only if the tag is recorded
+            await record(runtime, project, lines.map(line => line.id));
             const saved = await runtime.project.getProject(null, -1);
-            res.json({ site: siteName, curves: curves(saved), chartMode: chartMode(saved, settings) });
+            res.json({ site: siteName, curves: curves(saved) });
+        } catch (err) {
+            sendError(res, err);
+        }
+    });
+
+    app.get('/graphs', async (req, res) => {
+        try {
+            const project = await runtime.project.getProject(null, -1);
+            res.json({ site: siteName, graphs: siteGraphs(project, settings) });
+        } catch (err) {
+            sendError(res, err);
+        }
+    });
+
+    /**
+     * graphs of the page Courbes (from configuration.html): the tags of the graphs become the curves of the chart
+     * of the page Courbes (used by historiques.html and the supervision) and are recorded (history)
+     */
+    app.put('/graphs', express.json({ limit: '500kb' }), async (req, res) => {
+        try {
+            const project = await runtime.project.getProject(null, -1);
+            const all = allTags(project);
+            const result = graphs.set(settings, req.body && req.body.graphs, all);
+            const ids = graphs.usedTags(result);
+            const lines = ids.map((id, index) => {
+                const tag = all.find(t => t.id === id);
+                let first = null;
+                result.forEach(g => { first = first || g.series.find(x => x.tag === id); });
+                return {
+                    device: tag.deviceName, id: tag.id, name: tag.name,
+                    label: (first && first.label) || tag.name,
+                    color: (first && first.color) || COLORS[index % COLORS.length],
+                    yaxis: 1,
+                    spanGaps: true
+                };
+            });
+            await saveChart(runtime, project, lines);
+            await record(runtime, project, ids);
+            const saved = await runtime.project.getProject(null, -1);
+            res.json({ site: siteName, graphs: siteGraphs(saved, settings) });
         } catch (err) {
             sendError(res, err);
         }
     });
 
     return app;
+}
+
+/** lines of the chart of the page Courbes */
+async function saveChart(runtime, project, lines) {
+    const chartId = curvesChartId(project);
+    const old = (project.charts || []).find(c => c.id === chartId);
+    const charts = (project.charts || []).filter(c => c.id !== chartId);
+    charts.push({ id: chartId, name: (old && old.name) || 'Courbes du site', lines });
+    await save(runtime, 'charts', charts);
+}
+
+/** the history of a tag exists only if the tag is recorded (DAQ) */
+async function record(runtime, project, ids) {
+    for (const device of Object.values(project.devices || {})) {
+        let changed = false;
+        ids.forEach(id => {
+            const tag = device.tags && device.tags[id];
+            if (tag && !(tag.daq && tag.daq.enabled)) {
+                tag.daq = Object.assign({ interval: 5, changed: true, restored: false }, tag.daq, { enabled: true });
+                changed = true;
+            }
+        });
+        if (changed) {
+            await save(runtime, 'set-device', device);
+        }
+    }
+}
+
+/** graphs of the page Courbes, with the names of the tags */
+function siteGraphs(project, settings) {
+    const all = allTags(project);
+    const lines = curves(project).map(c => ({ id: c.tagId, name: c.name, label: c.label, color: c.color }));
+    const names = {};
+    all.forEach(t => { names[t.id] = t.name; });
+    return graphs.get(settings, all, lines).map(g => Object.assign(g, {
+        xName: g.xTag ? names[g.xTag] : null,
+        series: g.series.map(s => Object.assign(s, { name: names[s.tag] }))
+    }));
 }
 
 const COLORS = ['#1565C0', '#E65100', '#2E7D32', '#C62828', '#6A1B9A', '#00838F', '#F9A825', '#4E342E', '#AD1457', '#37474F'];
@@ -266,11 +319,34 @@ function curves(project) {
     }));
 }
 
-/** type of the chart of the page Courbes: { mode: 'temps' | 'xy', xTag: { id, name } } */
-function chartMode(project, settings) {
-    const config = curvesMode.get(settings);
-    const tag = config.mode === 'xy' ? allTags(project).find(t => t.id === config.xTag) : null;
-    return tag ? { mode: 'xy', xTag: { id: tag.id, name: tag.name } } : { mode: 'temps', xTag: null };
+/**
+ * sampling: one value every interval (ms) from the start of the period, average of the numbers
+ * (time of the middle of the interval), last value for the other values (text)
+ */
+function sample(values, from, interval) {
+    const result = [];
+    let bucket = null;
+    const close = () => {
+        if (bucket) {
+            const v = bucket.count ? Math.round(bucket.sum / bucket.count * 1e6) / 1e6 : bucket.last;
+            result.push({ t: bucket.start + Math.round(interval / 2), v: v });
+        }
+    };
+    values.forEach(p => {
+        const start = from + Math.floor((p.t - from) / interval) * interval;
+        if (!bucket || bucket.start !== start) {
+            close();
+            bucket = { start: start, sum: 0, count: 0, last: p.v };
+        }
+        const num = p.v === true || p.v === 'true' ? 1 : p.v === false || p.v === 'false' ? 0 : Number(p.v);
+        if (p.v !== null && p.v !== '' && Number.isFinite(num)) {
+            bucket.sum += num;
+            bucket.count++;
+        }
+        bucket.last = p.v;
+    });
+    close();
+    return result;
 }
 
 /** ms, or a date (ISO, 2026-11-09T08:00) */

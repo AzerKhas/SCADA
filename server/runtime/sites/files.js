@@ -23,6 +23,7 @@ var runtime;
 var logger;
 var siteName;
 var siteDir;
+var siteSettings;
 var timer = null;
 var upgradeChecked = false;
 /** files of the pages, for the navigation bar of the files (set before each writing) */
@@ -33,6 +34,7 @@ function init(_runtime, settings, _logger, _siteName) {
     logger = _logger;
     siteName = _siteName;
     siteDir = path.dirname(settings.workDir);
+    siteSettings = settings;
     // the project is saved by setProject (import, new site) or setProjectData (editor)
     ['setProject', 'setProjectData'].forEach(fnc => {
         const original = runtime.project[fnc];
@@ -101,8 +103,12 @@ async function writeFiles() {
     fs.writeFileSync(path.join(siteDir, 'configuration.html'), configurationHtml(project, configurationView, pageFiles));
     // access to the data of the site (API) for the pages of the folder
     fs.copyFileSync(path.join(__dirname, 'site-api.client.js'), path.join(siteDir, 'site-api.js'));
+    // scripts of the page Courbes and of the configuration of its graphs
+    fs.copyFileSync(path.join(__dirname, 'courbes.client.js'), path.join(siteDir, 'courbes.js'));
+    fs.copyFileSync(path.join(__dirname, 'graphs-editor.client.js'), path.join(siteDir, 'configuration-graphes.js'));
     fs.writeFileSync(path.join(siteDir, 'api.html'), apiHtml());
-    files.push({ file: 'api.html', page: 'API', viewId: null }, { file: 'site-api.js', page: 'API (script)', viewId: null });
+    files.push({ file: 'api.html', page: 'API', viewId: null }, { file: 'site-api.js', page: 'API (script)', viewId: null },
+        { file: 'courbes.js', page: 'Courbes (script)', viewId: null }, { file: 'configuration-graphes.js', page: 'Configuration des graphiques (script)', viewId: null });
 
     // remove the files of the pages deleted or renamed since the last save
     const previous = readManifest();
@@ -194,7 +200,7 @@ ${configurationView.svgcontent || ''}
     ])}
 </section>
 ${historySection()}
-${curvesSection(project, views)}
+${curvesSection(project)}
 <section>
   <h2>Connexions (${devices.length})</h2>
   ${table(['Nom', 'Type', 'Activée', 'Polling (ms)', 'Paramètres'], devices.map(device => [
@@ -296,166 +302,14 @@ function periodControls() {
 </script>`;
 }
 
-/** courbes.html: curves of the tags configured for the page Courbes, from the API */
+/** courbes.html: graphs configured in configuration.html (graphs.js), drawn by courbes.js with the API of the site */
 function curvesLive() {
     return `<section>
   <h2>Courbes (données de l'API du site)</h2>
-  ${periodControls()}
-  <div class="period">
-    <button id="zoom-back" style="display:none">&#8634; Annuler le zoom</button>
-    <span class="status" id="zoom-help">Zoom : sélectionner une période sur le graphique avec la souris.</span>
-    <span style="flex:1"></span>
-    <span class="status">Exporter la période affichée :</span>
-    <button id="export-xlsx">Excel</button><button id="export-png">Image</button><button id="export-pdf">PDF</button>
-  </div>
-  <div id="legend" class="legend"></div>
-  <div style="position:relative"><canvas id="chart" class="chart"></canvas></div>
+  <div id="graphs-app" data-site="${esc(siteName)}"></div>
 </section>
 <script src="site-api.js"></script>
-<script>
-  var curves = [], last = null, zooms = [], mode = { mode: 'temps', xTag: null }, xy = null, xRange = null;
-  var siteName = ${JSON.stringify(siteName).replace(/</g, '\\u003c')};
-  function label(s) {
-    var c = curves.find(function (x) { return x.tagId === s.id; }) || {};
-    return { label: c.label || s.name, color: c.color || '#1565C0', axis: c.axis || 'gauche' };
-  }
-  function isXY() {
-    return mode.mode === 'xy' && mode.xTag;
-  }
-  function tagIds() {
-    var ids = curves.map(function (c) { return c.tagId; });
-    if (isXY() && ids.indexOf(mode.xTag.id) < 0) { ids.push(mode.xTag.id); }
-    return ids;
-  }
-  function showZoomBack() {
-    document.getElementById('zoom-back').style.display = zooms.length ? '' : 'none';
-  }
-  window.loadData = function (from, to, keepZoom) {
-    if (!keepZoom) { zooms = []; }
-    xRange = null;
-    showZoomBack();
-    setStatus('Chargement...');
-    SiteApi.info().then(function (info) {
-      curves = info.curves;
-      mode = info.chartMode || { mode: 'temps', xTag: null };
-      if (!curves.length) {
-        throw new Error('Aucun tag choisi : éditeur, panneau Sites, menu du site, Tags des courbes.');
-      }
-      document.getElementById('zoom-help').textContent = isXY()
-        ? 'Graphique XY : tags en fonction de ' + mode.xTag.name + '. Zoom : sélectionner une plage de ' + mode.xTag.name + ' avec la souris.'
-        : 'Zoom : sélectionner une période sur le graphique avec la souris.';
-      return SiteApi.history({ tags: tagIds(), from: from, to: to, maxPoints: isXY() ? 20000 : 2000 });
-    }).then(function (data) {
-      last = data;
-      draw();
-      setStatus(data.series.reduce(function (n, s) { return n + s.count; }, 0) + ' valeurs, source : ' + data.source);
-    }).catch(function (err) { setStatus(err.message, true); });
-  };
-  function draw() {
-    var canvas = document.getElementById('chart');
-    if (isXY()) {
-      xy = SiteApi.pairXY(last, mode.xTag.id);
-      var counts = SiteApi.drawXY(canvas, xy, curves, mode.xTag.name, xRange);
-      document.getElementById('legend').innerHTML = xy.map(function (s, i) {
-        var l = label(s);
-        return '<span><i style="background:' + l.color + '"></i>' + l.label + ' (' + l.axis + ', ' + counts[i] + ' points)</span>';
-      }).join('') + '<span>axe X : ' + mode.xTag.name + '</span>';
-    } else {
-      xy = null;
-      document.getElementById('legend').innerHTML = last.series.map(function (s) {
-        var l = label(s);
-        return '<span><i style="background:' + l.color + '"></i>' + l.label + ' (' + l.axis + ', ' + s.count + ' valeurs)</span>';
-      }).join('');
-      SiteApi.drawChart(canvas, last, curves);
-    }
-  }
-  function period() {
-    var text = 'Période du ' + SiteApi.formatDate(last.from, true) + ' au ' + SiteApi.formatDate(last.to, true);
-    if (isXY()) {
-      text = 'En fonction de ' + mode.xTag.name + (xRange ? ' (de ' + xRange.min.toPrecision(4) + ' à ' + xRange.max.toPrecision(4) + ')' : '') + ' - ' + text;
-    }
-    return text;
-  }
-  function showPeriod(from, to) {
-    document.getElementById('from').value = SiteApi.inputValue(from);
-    document.getElementById('to').value = SiteApi.inputValue(to);
-  }
-  SiteApi.enableZoom(document.getElementById('chart'), function (from, to) {
-    if (!last) { return; }
-    if (isXY()) {
-      // XY: zoom on a range of the axis X, with the same data
-      zooms.push({ xRange: xRange });
-      xRange = { min: from, max: to };
-      showZoomBack();
-      draw();
-      return;
-    }
-    from = Math.round(from);
-    to = Math.round(to);
-    zooms.push({ from: last.from, to: last.to });
-    showPeriod(from, to);
-    window.loadData(from, to, true);
-  });
-  document.getElementById('zoom-back').addEventListener('click', function () {
-    var z = zooms.pop();
-    if (!z) { return; }
-    if (isXY()) {
-      xRange = z.xRange;
-      showZoomBack();
-      draw();
-      return;
-    }
-    showPeriod(z.from, z.to);
-    window.loadData(z.from, z.to, true);
-  });
-  function fileName(ext) {
-    var d = new Date(last.from);
-    var p = function (n) { return (n < 10 ? '0' : '') + n; };
-    return (isXY() ? 'Courbes_XY_' : 'Courbes_') + siteName + '_' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + '.' + ext;
-  }
-  function title() {
-    return (isXY() ? 'Courbes XY - ' : 'Courbes - ') + siteName;
-  }
-  function legend() {
-    return (xy || last.series).map(function (s) { var l = label(s); return { label: l.label, color: l.color }; });
-  }
-  /**
-   * series of the files: all the values of the period (not reduced like the chart)
-   * XY: the tag X (its value at the time of each point) then the tags Y, only the points of the zoomed range
-   */
-  function fileSeries(data) {
-    if (!isXY()) {
-      return data.series.map(function (s) { return { label: label(s).label, values: s.values }; });
-    }
-    var pairs = SiteApi.pairXY(data, mode.xTag.id);
-    var inRange = function (pt) { return !xRange || (pt.x >= xRange.min && pt.x <= xRange.max); };
-    var xValues = {};
-    pairs.forEach(function (s) { s.points.filter(inRange).forEach(function (pt) { xValues[pt.t] = pt.x; }); });
-    var xSeries = { label: mode.xTag.name + ' (axe X)', values: Object.keys(xValues).map(function (t) { return { t: Number(t), v: xValues[t] }; }) };
-    return [xSeries].concat(pairs.map(function (s) {
-      return { label: label(s).label, values: s.points.filter(inRange).map(function (pt) { return { t: pt.t, v: pt.y }; }) };
-    }));
-  }
-  function exportData(kind) {
-    if (!last) { return; }
-    setStatus('Préparation du fichier ' + kind.toUpperCase() + '...');
-    var full = SiteApi.history({ tags: tagIds(), from: last.from, to: last.to, maxPoints: 200000 });
-    full.then(function (data) {
-      var body = { title: title(), subtitle: period(), fileName: fileName(kind).replace(/[.][a-z]+$/, ''), series: fileSeries(data) };
-      if (kind === 'pdf') {
-        body.image = SiteApi.chartPicture(document.getElementById('chart'), '', '', legend()).toDataURL('image/jpeg', 0.92);
-      }
-      return SiteApi.exportFile(kind, body, fileName(kind));
-    }).then(function () { setStatus('Fichier ' + kind.toUpperCase() + ' créé.'); })
-      .catch(function (err) { setStatus(err.message, true); });
-  }
-  document.getElementById('export-xlsx').addEventListener('click', function () { exportData('xlsx'); });
-  document.getElementById('export-pdf').addEventListener('click', function () { exportData('pdf'); });
-  document.getElementById('export-png').addEventListener('click', function () {
-    if (!last) { return; }
-    SiteApi.savePicture(SiteApi.chartPicture(document.getElementById('chart'), title(), period(), legend()), fileName('png'));
-  });
-</script>`;
+<script src="courbes.js"></script>`;
 }
 
 /** historiques.html: table of the history of the tags of the page Courbes, from the API */
@@ -511,7 +365,8 @@ function apiHtml() {
   ${table(['Service', 'Adresse', 'Paramètres', 'Réponse'], [
         ['Informations', `GET ${base}/info`, '', 'site, tags (nom, connexion, adresse, type, enregistré), curves (tags de la page Courbes), source de l\'historique'],
         ['Valeurs actuelles', `GET ${base}/values`, 'tags=nom1,nom2 (tous les tags si absent)', 'values : nom, valeur, timestamp'],
-        ['Historique', `GET ${base}/history`, 'tags=nom1,nom2 (tags des courbes si absent)\nfrom, to : ms ou date ISO (8 dernières heures si absent)\nmaxPoints : 2000 par défaut', 'series : nom, count, values [{ t : ms, v : valeur }]']
+        ['Historique', `GET ${base}/history`, 'tags=nom1,nom2 (tags des courbes si absent)\nfrom, to : ms ou date ISO (8 dernières heures si absent)\nmaxPoints : 2000 par défaut\ninterval : une valeur (moyenne) toutes les n secondes', 'series : nom, count, values [{ t : ms, v : valeur }]'],
+        ['Graphiques', `GET ${base}/graphs`, '', 'graphs : titre, mode (temps / xy), tag X, tags, unités, couleurs, limites, période, échantillonnage']
     ])}
 </section>
 <section>
@@ -546,161 +401,46 @@ function apiHtml() {
 </script>`);
 }
 
-/** tags chosen for the page Courbes (lines of the chart shown by the page) */
-function curvesSection(project, views) {
-    const curvesView = views.find(view => view.id === CURVES_VIEW);
-    const chartItem = Object.values((curvesView && curvesView.items) || {}).find(item => item.type === 'svg-ext-html_chart' && item.property && item.property.id);
-    const chart = chartItem ? (project.charts || []).find(c => c.id === chartItem.property.id) : null;
-    const allTags = {};
-    Object.values(project.devices || {}).forEach(device => Object.values(device.tags || {}).forEach(tag => allTags[tag.id] = { device, tag }));
-    const lines = (chart && chart.lines) || [];
-    const mode = chartMode();
-    const xTag = mode.mode === 'xy' && allTags[mode.xTag] ? allTags[mode.xTag].tag.name : null;
-    return `<section>
-  <h2>Tags des courbes (page Courbes)</h2>
-  <p class="info">Tags affichés par le graphique de la page Courbes. La période est choisie avec le calendrier du graphique.</p>
-  <p><b>Type de graphique :</b> ${xTag ? `XY : tags ci-dessous (axe Y) en fonction de ${esc(xTag)} (axe X)` : 'en fonction du temps'}</p>
-  ${table(['Libellé', 'Tag', 'Connexion', 'Couleur', 'Axe', 'Enregistré (historique)'], lines.map(line => {
-        const found = allTags[line.id];
-        return [line.label || line.name, found ? found.tag.name : line.name || line.id, found ? found.device.name : line.device || '',
-            line.color || '', Number(line.yaxis) === 2 ? 'droite' : 'gauche',
-            found && found.tag.daq && found.tag.daq.enabled ? `oui (${found.tag.daq.interval || ''} s)` : 'non'];
-    }))}
-  ${curvesEditor()}
-</section>`;
-}
-
-/** type of the chart of courbes.html (curves-mode.js): { mode: 'temps' | 'xy', xTag: id } */
-function chartMode() {
+/** graphs of the page Courbes (graphs.js): summary and editor (configuration-graphes.js) */
+function curvesSection(project) {
+    const allTags = [];
+    const names = {};
+    Object.values(project.devices || {}).forEach(device => Object.values(device.tags || {}).forEach(tag => {
+        if (!tag.sysType) {
+            allTags.push({ id: tag.id, name: tag.name });
+            names[tag.id] = tag;
+        }
+    }));
+    const view = ((project.hmi && project.hmi.views) || []).find(v => v.id === CURVES_VIEW);
+    const item = Object.values((view && view.items) || {}).find(i => i.type === 'svg-ext-html_chart' && i.property && i.property.id);
+    const chart = item ? (project.charts || []).find(c => c.id === item.property.id) : null;
+    const lines = ((chart && chart.lines) || []).map(line => ({ id: line.id, name: line.name, label: line.label, color: line.color }));
+    let list = [];
     try {
-        const config = JSON.parse(fs.readFileSync(path.join(siteDir, '_appdata', 'courbes-mode.json'), 'utf8'));
-        return config.mode === 'xy' && config.xTag ? config : { mode: 'temps', xTag: null };
+        list = require('./graphs').get(siteSettings, allTags, lines);
     } catch (err) {
-        return { mode: 'temps', xTag: null };
+        logger.error(`site files: graphs ${err}`);
     }
-}
-
-/**
- * choice of the tags of the page Courbes in configuration.html: list of the tags of the site (API info),
- * saved with the API (PUT curves); the file is written again by the server after the save
- */
-function curvesEditor() {
-    return `<h3>Choisir les tags des courbes</h3>
-<p class="info">Cochez les tags à afficher dans la page Courbes : chaque changement est enregistré automatiquement. Les tags choisis sont enregistrés (historique) à partir de ce moment.</p>
-<div class="period">
-  <label>Type de graphique
-    <select id="curves-mode">
-      <option value="temps">En fonction du temps</option>
-      <option value="xy">XY : tags cochés (axe Y) en fonction d'un tag (axe X)</option>
-    </select>
-  </label>
-  <label id="curves-xtag-box" style="display:none">Tag de l'axe X <select id="curves-xtag"></select></label>
-</div>
-<div class="period">
-  <input id="curves-filter" placeholder="Rechercher un tag" size="30">
-  <button id="curves-save" class="primary">Enregistrer</button>
-  <span id="curves-status" class="status"></span>
-</div>
-<div class="history"><table><thead><tr><th></th><th>Tag</th><th>Connexion</th><th>Adresse</th><th>Libellé de la courbe</th><th>Couleur</th><th>Axe</th></tr></thead>
-<tbody id="curves-rows"><tr><td colspan="7" class="empty">Chargement...</td></tr></tbody></table></div>
+    const tagText = id => {
+        const tag = names[id];
+        return tag ? `${tag.name}${tag.daq && tag.daq.enabled ? '' : ' (non enregistré)'}` : id;
+    };
+    const limits = (min, max) => min === null && max === null ? 'auto' : `${min === null ? 'auto' : min} à ${max === null ? 'auto' : max}`;
+    return `<section id="graphes">
+  <h2>Graphiques de la page Courbes</h2>
+  ${table(['Graphique', 'Mode', 'Tags (libellé, unité, limites Y)', 'Période', 'Échantillonnage', 'Options'], list.map(g => [
+        g.title,
+        g.mode === 'xy' ? `XY : en fonction de ${tagText(g.xTag)}${g.xUnit ? ` (${g.xUnit})` : ''}, X : ${limits(g.xMin, g.xMax)}` : 'temps',
+        g.series.map(x => `${tagText(x.tag)} : ${x.label || ''}${x.unit ? ` (${x.unit})` : ''}, ${limits(x.min, x.max)}`).join('\n'),
+        g.period.type === 'fixed' ? `du ${new Date(g.period.from).toLocaleString('fr-FR')} au ${new Date(g.period.to).toLocaleString('fr-FR')}` : `${g.period.hours} dernière(s) heure(s)`,
+        g.interval ? `${g.interval} s` : 'toutes les valeurs',
+        [g.legend ? 'légende' : '', g.grid ? 'grille' : '', g.tooltip ? 'valeurs au survol' : ''].filter(x => x).join(', ')
+    ]))}
+  <h3>Configurer les graphiques</h3>
+  <div id="graphs-editor"></div>
+</section>
 <script src="site-api.js"></script>
-<script>
-  (function () {
-    var colors = ['#1565C0', '#E65100', '#2E7D32', '#C62828', '#6A1B9A', '#00838F', '#F9A825', '#4E342E', '#AD1457', '#37474F'];
-    var rows = [];
-    var modeSelect = document.getElementById('curves-mode'), xSelect = document.getElementById('curves-xtag');
-    function showMode() {
-      document.getElementById('curves-xtag-box').style.display = modeSelect.value === 'xy' ? '' : 'none';
-    }
-    function status(text, error) {
-      var s = document.getElementById('curves-status');
-      s.textContent = text;
-      s.className = 'status' + (error ? ' error' : '');
-    }
-    function escapeHtml(t) { return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
-    function render() {
-      var text = document.getElementById('curves-filter').value.trim().toLowerCase();
-      document.getElementById('curves-rows').innerHTML = rows.map(function (r, i) {
-        var visible = !text || (r.name + ' ' + r.device + ' ' + r.label + ' ' + r.address).toLowerCase().indexOf(text) >= 0;
-        return '<tr' + (visible ? '' : ' style="display:none"') + '>' +
-          '<td><input type="checkbox" data-i="' + i + '" data-f="selected"' + (r.selected ? ' checked' : '') + '></td>' +
-          '<td>' + escapeHtml(r.name) + (r.recorded ? ' &#128339;' : '') + '</td><td>' + escapeHtml(r.device) + '</td><td>' + escapeHtml(r.address) + '</td>' +
-          '<td><input data-i="' + i + '" data-f="label" value="' + escapeHtml(r.label) + '" size="24"></td>' +
-          '<td><input type="color" data-i="' + i + '" data-f="color" value="' + r.color + '"></td>' +
-          '<td><select data-i="' + i + '" data-f="axis"><option value="gauche"' + (r.axis !== 'droite' ? ' selected' : '') + '>gauche</option>' +
-          '<option value="droite"' + (r.axis === 'droite' ? ' selected' : '') + '>droite</option></select></td></tr>';
-      }).join('') || '<tr><td colspan="7" class="empty">Aucun tag dans ce site.</td></tr>';
-    }
-    function load() {
-      SiteApi.info().then(function (info) {
-        rows = info.tags.map(function (t, i) {
-          var c = info.curves.filter(function (x) { return x.tagId === t.id; })[0];
-          return { tag: t.id, name: t.name, device: t.device, address: t.address, recorded: t.recorded, selected: !!c,
-            label: c ? c.label : t.name, color: (c && c.color ? c.color : colors[i % colors.length]).slice(0, 7), axis: c ? c.axis : 'gauche',
-            order: c ? info.curves.indexOf(c) : 1000 + i };
-        }).sort(function (a, b) { return a.order - b.order; });
-        // a tag not yet chosen gets a color not used by the chosen curves
-        var used = rows.filter(function (r) { return r.selected; }).map(function (r) { return r.color.toLowerCase(); });
-        var free = colors.filter(function (c) { return used.indexOf(c.toLowerCase()) < 0; });
-        rows.filter(function (r) { return !r.selected; }).forEach(function (r, i) { if (free.length) { r.color = free[i % free.length]; } });
-        render();
-        xSelect.innerHTML = '<option value="">(choisir)</option>' + info.tags.map(function (t) {
-          return '<option value="' + escapeHtml(t.id) + '">' + escapeHtml(t.name) + ' (' + escapeHtml(t.device) + ')</option>';
-        }).join('');
-        var mode = info.chartMode || { mode: 'temps' };
-        modeSelect.value = mode.mode === 'xy' ? 'xy' : 'temps';
-        xSelect.value = mode.xTag ? mode.xTag.id : '';
-        showMode();
-        status(info.curves.length + ' tag(s) choisi(s)' + (mode.mode === 'xy' ? ', graphique XY' : ''));
-      }).catch(function (err) { status(err.message, true); });
-    }
-    // each change is saved (short delay: several boxes checked quickly give one save)
-    var timer = null, saving = false, again = false;
-    function schedule() {
-      clearTimeout(timer);
-      status('Modification en attente...');
-      timer = setTimeout(save, 600);
-    }
-    function save() {
-      timer = null;
-      if (saving) { again = true; return; }
-      var curves = rows.filter(function (r) { return r.selected; }).map(function (r) {
-        return { tag: r.tag, label: r.label, color: r.color, axis: r.axis };
-      });
-      if (modeSelect.value === 'xy' && !xSelect.value) {
-        status('Graphique XY : choisir le tag de l’axe X.', true);
-        return;
-      }
-      saving = true;
-      status('Enregistrement...');
-      SiteApi.saveCurves(curves, { mode: modeSelect.value, xTag: xSelect.value }).then(function (result) {
-        status('Enregistré : ' + result.curves.length + ' tag(s) dans la page Courbes' +
-          (result.chartMode && result.chartMode.mode === 'xy' ? ', en fonction de ' + result.chartMode.xTag.name + '.' : '.'));
-      }).catch(function (err) {
-        status('Non enregistré : ' + err.message, true);
-      }).then(function () {
-        saving = false;
-        if (again) { again = false; save(); }
-      });
-    }
-    window.addEventListener('beforeunload', function (e) {
-      if (timer || saving) { if (timer) { clearTimeout(timer); save(); } e.preventDefault(); e.returnValue = ''; }
-    });
-    document.getElementById('curves-rows').addEventListener('change', function (e) {
-      var i = e.target.getAttribute('data-i'), f = e.target.getAttribute('data-f');
-      if (i !== null) { rows[i][f] = f === 'selected' ? e.target.checked : e.target.value; schedule(); }
-    });
-    document.getElementById('curves-rows').addEventListener('input', function (e) {
-      var i = e.target.getAttribute('data-i'), f = e.target.getAttribute('data-f');
-      if (i !== null && f === 'label') { rows[i].label = e.target.value; }
-    });
-    document.getElementById('curves-filter').addEventListener('input', render);
-    modeSelect.addEventListener('change', function () { showMode(); schedule(); });
-    xSelect.addEventListener('change', schedule);
-    document.getElementById('curves-save').addEventListener('click', function () { clearTimeout(timer); save(); });
-    load();
-  })();
-</script>`;
+<script src="configuration-graphes.js"></script>`;
 }
 
 function itemsTable(items, tags) {
@@ -833,6 +573,14 @@ function document(title, body) {
   .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 6px 0; font-size: 13px; }
   .legend i { display: inline-block; width: 22px; height: 4px; margin-right: 6px; vertical-align: middle; }
   .history { max-height: 520px; overflow: auto; }
+  .graph-card { background: #fff; border: 1px solid #cfd8dc; border-radius: 6px; padding: 10px 14px; margin: 14px 0; }
+  .graph-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; } .graph-head h3 { margin: 4px 0; }
+  .graph-card .chart { height: 360px; }
+  .legend-item { cursor: pointer; user-select: none; } .legend-item.off { opacity: 0.4; text-decoration: line-through; }
+  .legend small { color: #78909c; }
+  .pan-bar { position: relative; height: 16px; margin: 6px 0 2px; background: #e3e8ef; border-radius: 8px; cursor: pointer; user-select: none; touch-action: none; }
+  .pan-thumb { position: absolute; top: 0; bottom: 0; min-width: 24px; background: #90a4ae; border-radius: 8px; cursor: grab; }
+  .pan-labels { display: flex; justify-content: space-between; font-size: 12px; color: #607d8b; }
   .sitenav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: -20px -20px 18px -20px; padding: 8px 20px; background: #1f3864; position: sticky; top: 0; z-index: 10; }
   .sitenav a { color: #fff; text-decoration: none; padding: 5px 10px; border-radius: 3px; font-size: 14px; }
   .sitenav a:hover { background: rgba(255,255,255,0.15); } .sitenav a.active { background: #1e88e5; }
