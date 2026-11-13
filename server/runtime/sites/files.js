@@ -37,6 +37,8 @@ function init(_runtime, settings, _logger, _siteName) {
     siteDir = path.dirname(settings.workDir);
     siteSettings = settings;
     require('./versions').init(runtime, settings, logger);
+    // diagnostic: state of the connections, errors of communication (diagnostic.js)
+    require('./diagnostic').init(runtime, settings, logger);
     // the project is saved by setProject (import, new site) or setProjectData (editor)
     ['setProject', 'setProjectData'].forEach(fnc => {
         const original = runtime.project[fnc];
@@ -132,6 +134,10 @@ async function writeFiles() {
     fs.copyFileSync(path.join(__dirname, 'alarms.client.js'), path.join(siteDir, 'alarmes.js'));
     files.push({ file: 'alarmes.js', page: 'Alarmes (script)', viewId: null });
     fs.writeFileSync(path.join(siteDir, 'versions.html'), versionsHtml());
+    // diagnostic of the communication of the site
+    fs.copyFileSync(path.join(__dirname, 'diagnostic.client.js'), path.join(siteDir, 'diagnostic.js'));
+    fs.writeFileSync(path.join(siteDir, 'diagnostic.html'), diagnosticHtml());
+    files.push({ file: 'diagnostic.html', page: 'Diagnostic', viewId: null }, { file: 'diagnostic.js', page: 'Diagnostic (script)', viewId: null });
     files.push({ file: 'versions.html', page: 'Versions', viewId: null }, { file: 'versions.js', page: 'Versions (script)', viewId: null });
     files.push({ file: 'api.html', page: 'API', viewId: null }, { file: 'site-api.js', page: 'API (script)', viewId: null },
         { file: 'courbes.js', page: 'Courbes (script)', viewId: null }, { file: 'configuration-graphes.js', page: 'Configuration des graphiques (script)', viewId: null });
@@ -475,6 +481,15 @@ function apiHtml() {
     ])}
 </section>
 <section>
+  <h2>Diagnostic</h2>
+  ${table(['Méthode', 'Adresse', 'Paramètres / corps', 'Réponse (data)'], [
+        row('GET', '/api/v1/diagnostic', '', 'communication de tous les sites : état (ok, warning, error, stopped), équipements connectés, dernière donnée, tags sans mise à jour, erreurs'),
+        row('GET', `${base}/diagnostic`, '', 'résumé, équipements (état, depuis, dernière donnée, erreurs), tags sans mise à jour, derniers événements'),
+        row('GET', `${base}/diagnostic/tags`, 'stale=true : tags sans mise à jour seulement\ndevice : équipement', 'tags : dernière valeur, dernière mise à jour, âge, limite, stale'),
+        row('GET', `${base}/diagnostic/events`, 'from, to (7 derniers jours si absent)\nlevel : error, warning, info\ndevice : équipement', 'journal : changements d’état des connexions, erreurs et avertissements de communication')
+    ])}
+</section>
+<section>
   <h2>Versions et sauvegardes</h2>
   ${table(['Méthode', 'Adresse', 'Paramètres / corps', 'Réponse (data)'], [
         row('GET', `${base}/versions`, '', 'versions : version_id, date, type (automatique, manuelle, avant restauration, restauration), résumé des modifications'),
@@ -554,6 +569,19 @@ function apiHtml() {
 }
 
 /** versions.html: versions of the site and full backups of its folder (versions.js, API v1) */
+/** diagnostic.html: communication of the sites, equipments, tags without update, errors (diagnostic.js, API v1) */
+function diagnosticHtml() {
+    return document(`Diagnostic - ${siteName}`, `${navBar('diagnostic.html')}
+<header>
+  <h1>Diagnostic <small>${esc(siteName)}</small></h1>
+  <p class="info">Suivi technique : état de la communication de chaque site et de chaque équipement (automates, serveurs OPC UA...),
+     dernière donnée reçue, tags sans mise à jour et journal des erreurs de communication. Actualisé toutes les 10 secondes.</p>
+</header>
+<div id="diagnostic-app" data-site="${esc(siteName)}"></div>
+<script src="site-api.js"></script>
+<script src="diagnostic.js"></script>`);
+}
+
 function versionsHtml() {
     return document(`Versions - ${siteName}`, `${navBar('versions.html')}
 <header>
@@ -711,7 +739,7 @@ function navBar(current) {
     return `<nav class="sitenav" id="sitenav">
   <a href="${base}/home" class="back" onclick="if (history.length > 1 && document.referrer) { history.back(); return false; }">&#8592; Retour</a>
   ${link(`${base}/home`, 'Supervision')}
-  <span class="sep"></span>${pages}${link('versions.html', 'Versions', current === 'versions.html')}${link('api.html', 'API', current === 'api.html')}
+  <span class="sep"></span>${pages}${link('diagnostic.html', 'Diagnostic', current === 'diagnostic.html')}${link('versions.html', 'Versions', current === 'versions.html')}${link('api.html', 'API', current === 'api.html')}
   <span class="sep"></span>${link(`${base}/editor`, 'Éditeur')}
 </nav>
 <script>if (window.self !== window.top) { document.getElementById('sitenav').style.display = 'none'; }</script>`;
@@ -763,6 +791,13 @@ function document(title, body) {
   .tabs { display: flex; gap: 4px; border-bottom: 2px solid #1f3864; margin: 12px 0 6px; }
   .tabs button { border: 1px solid #cfd8dc; border-bottom: none; background: #eceff1; border-radius: 6px 6px 0 0; padding: 7px 16px; }
   .tabs button.on { background: #1f3864; color: #fff; border-color: #1f3864; }
+  .st { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: bold; }
+  .st-ok { background: #e8f5e9; color: #1b5e20; } .st-warning { background: #fff3e0; color: #e65100; } .st-error { background: #ffebee; color: #b71c1c; }
+  .st-off { background: #eceff1; color: #546e7a; } .st-info { background: #e3f2fd; color: #0d47a1; }
+  .diag-cards { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+  .diag-cards .card { background: #fff; border: 1px solid #cfd8dc; border-radius: 6px; padding: 10px 14px; min-width: 170px; font-size: 13px; color: #546e7a; }
+  .diag-cards .card b { display: block; font-size: 22px; color: #1f3864; margin-top: 4px; } .diag-cards .card small { display: block; }
+  .bad { color: #c62828 !important; font-weight: bold; }
   .sets-bar { background: #e8eef7; border-radius: 6px; padding: 6px 10px; }
   .picker-back { position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 50; display: flex; align-items: center; justify-content: center; }
   .picker { background: #fff; border-radius: 8px; padding: 12px 16px; width: min(1000px, 94vw); max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }

@@ -78,7 +78,8 @@ function init(app, server, _settings, _logger) {
         backup: findBackup,
         createBackup: (site, comment) => createBackup(site, 'manual', comment),
         deleteBackup: deleteBackup,
-        restoreBackup: restoreBackup
+        restoreBackup: restoreBackup,
+        request: requestSite
     }, settings, logger));
     app.use(onRequest);
     // automatic backups: 2 minutes after the start, then every hour

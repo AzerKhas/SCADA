@@ -63,6 +63,8 @@ function router(manager, settings, logger) {
                 alarms: ['GET /api/v1/sites/{site_id}/alarms', 'GET /api/v1/sites/{site_id}/alarms/history',
                     'POST /api/v1/sites/{site_id}/alarms/{alarm_id}/ack', 'POST /api/v1/sites/{site_id}/alarms/ack',
                     'GET /api/v1/sites/{site_id}/alarms/config', 'PUT|DELETE /api/v1/sites/{site_id}/alarms/config/{name}'],
+                diagnostic: ['GET /api/v1/diagnostic', 'GET /api/v1/sites/{site_id}/diagnostic', 'GET /api/v1/sites/{site_id}/diagnostic/tags',
+                    'GET /api/v1/sites/{site_id}/diagnostic/events'],
                 versions: ['GET /api/v1/sites/{site_id}/versions', 'POST /api/v1/sites/{site_id}/versions { comment }',
                     'GET /api/v1/sites/{site_id}/versions/{version_id}', 'GET /api/v1/sites/{site_id}/versions/{version_id}/changes?with=',
                     'GET /api/v1/sites/{site_id}/versions/{version_id}/diff?file=&with=', 'POST /api/v1/sites/{site_id}/versions/{version_id}/restore'],
@@ -71,6 +73,36 @@ function router(manager, settings, logger) {
                     'POST /api/v1/sites/{site_id}/backups/{backup_id}/restore']
             }
         });
+    }));
+
+    /**
+     * state of the communication of all the sites: site stopped / starting, else the summary of its diagnostic
+     * (equipments connected, last data, tags without update, errors)
+     */
+    app.get('/diagnostic', h(async (req, res) => {
+        const sites = await manager.list();
+        const result = await Promise.all(sites.map(async info => {
+            const item = { site_id: info.name, state: info.running ? 'running' : info.stopped ? 'stopped' : 'starting', url: info.url };
+            if (!info.running) {
+                item.communication = info.stopped ? 'stopped' : 'starting';
+                return item;
+            }
+            try {
+                const site = manager.get(info.name);
+                const answer = await Promise.race([
+                    manager.request(site, 'GET', '/api/v1/diagnostic'),
+                    new Promise((resolve, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+                ]);
+                return Object.assign(item, answer.data.summary, {
+                    devices: answer.data.devices.map(d => ({ name: d.name, type: d.type, status: d.status, statusText: d.statusText, connected: d.connected, enabled: d.enabled, lastData: d.lastData })),
+                    deviceCount: answer.data.summary.devices
+                });
+            } catch (err) {
+                return Object.assign(item, { communication: 'error', error: `Le site ne répond pas (${err.message})` });
+            }
+        }));
+        const count = state => result.filter(s => s.communication === state).length;
+        send(res, result, { count: result.length, time: Date.now(), ok: count('ok'), warning: count('warning'), error: count('error'), stopped: count('stopped') });
     }));
 
     app.get('/sites', h(async (req, res) => {

@@ -413,6 +413,40 @@ function router(runtime, settings, siteId) {
         send(res, { alarm_id: id, acknowledged: !!changed }, meta());
     }));
 
+    // ---------------------------------------------------------------- diagnostic
+    const diagnostic = require('./diagnostic');
+
+    /** state of the communication, equipments, last data, tags without update, last events */
+    app.get('/diagnostic', h(async (req, res) => {
+        const result = diagnostic.report(await project());
+        send(res, {
+            summary: result.summary, devices: result.devices,
+            staleTags: result.tags.filter(t => t.stale),
+            events: diagnostic.journal({ from: Date.now() - 24 * 3600 * 1000 }).slice(0, 50)
+        }, meta({ time: result.time, started: result.started }));
+    }));
+
+    app.get('/diagnostic/tags', h(async (req, res) => {
+        let tags = diagnostic.report(await project()).tags;
+        if (req.query.stale === 'true') {
+            tags = tags.filter(t => t.stale);
+        }
+        if (req.query.device) {
+            tags = tags.filter(t => t.device === String(req.query.device));
+        }
+        send(res, tags, meta({ count: tags.length, time: Date.now() }));
+    }));
+
+    app.get('/diagnostic/events', h((req, res) => {
+        const level = String(req.query.level || '');
+        if (level && !['error', 'warning', 'info'].includes(level)) {
+            throw badRequest('Paramètre level invalide : error, warning ou info.', { param: 'level', value: level });
+        }
+        const { from, to } = period(req.query, 7 * 24 * 3600 * 1000, MAX_HISTORY);
+        const events = diagnostic.journal({ from, to, level, device: req.query.device ? String(req.query.device) : '' });
+        send(res, events, meta({ from, to, count: events.length }));
+    }));
+
     // ---------------------------------------------------------------- versions
     const versions = require('./versions');
     const findVersion = async id => {
