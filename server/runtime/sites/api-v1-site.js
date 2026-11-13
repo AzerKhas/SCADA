@@ -301,39 +301,101 @@ function router(runtime, settings, siteId) {
 
     // ---------------------------------------------------------------- alarms
     const ADMIN = -1;
-    /** name of the alarm definition: name of its tag */
+    /** alarm definition name: its tag and its equipment */
     const alarmTags = async () => {
         const prj = await project();
-        const names = {};
-        api.allTags(prj).forEach(t => { names[t.id] = t.name; });
+        const tags = {};
+        api.allTags(prj).forEach(t => { tags[t.id] = t; });
         const defs = {};
-        (prj.alarms || []).forEach(a => { defs[a.name] = names[a.property && a.property.variableId] || null; });
+        (prj.alarms || []).forEach(a => {
+            const tag = tags[a.property && a.property.variableId];
+            defs[a.name] = { tag: tag ? tag.name : null, device: tag ? tag.deviceName : null };
+        });
         return defs;
     };
 
+    /** filters of the alarms: type (priority, several: a,b), device, tag, text */
+    const filterAlarms = (alarms, query) => {
+        const types = list(query.type);
+        const unknown = types.filter(t => !LEVELS.includes(t));
+        if (unknown.length) {
+            throw badRequest(`Paramètre type invalide : ${LEVELS.join(', ')}.`, { param: 'type', value: unknown });
+        }
+        const text = String(query.text || '').trim().toLowerCase();
+        const tag = String(query.tag || '').trim();
+        const device = String(query.device || '').trim();
+        return alarms.filter(a => (!types.length || types.includes(a.type)) && (!tag || a.tag === tag || a.name === tag) &&
+            (!device || a.device === device) && (!text || `${a.text} ${a.group} ${a.name} ${a.tag || ''}`.toLowerCase().includes(text)));
+    };
+
+    const countLevels = alarms => {
+        const counts = { highhigh: 0, high: 0, low: 0, info: 0, toack: 0, critical: 0 };
+        alarms.forEach(a => {
+            counts[a.type] = (counts[a.type] || 0) + 1;
+            if (a.toack) { counts.toack++; }
+            if (a.critical) { counts.critical++; }
+        });
+        return counts;
+    };
+
     app.get('/alarms', h(async (req, res) => {
-        const type = String(req.query.type || '').trim();
-        const text = String(req.query.text || '').trim().toLowerCase();
-        const tag = String(req.query.tag || '').trim();
         const defs = await alarmTags();
-        let alarms = (runtime.alarmsMgr.getAlarmsValues(null, ADMIN) || []).map(a => alarmInfo(a, defs));
-        if (type) {
-            alarms = alarms.filter(a => a.type === type);
-        }
-        if (text) {
-            alarms = alarms.filter(a => `${a.text} ${a.group} ${a.name}`.toLowerCase().includes(text));
-        }
-        if (tag) {
-            alarms = alarms.filter(a => a.tag === tag || a.name === tag);
-        }
-        send(res, alarms, meta({ count: alarms.length, time: Date.now() }));
+        const all = (runtime.alarmsMgr.getAlarmsValues(null, ADMIN) || []).map(a => alarmInfo(a, defs));
+        // the critical alarms first, then the newest
+        const alarms = filterAlarms(all, req.query).sort((a, b) => LEVELS.indexOf(a.type) - LEVELS.indexOf(b.type) || (b.ontime || 0) - (a.ontime || 0));
+        send(res, alarms, meta({ count: alarms.length, time: Date.now(), counts: countLevels(all) }));
     }));
 
     app.get('/alarms/history', h(async (req, res) => {
         const { from, to } = period(req.query, 24 * 3600 * 1000, MAX_HISTORY);
         const history = await runtime.alarmsMgr.getAlarmsHistory({ start: from, end: to }, ADMIN);
         const defs = await alarmTags();
-        send(res, history.map(a => alarmInfo(a, defs)), meta({ from, to, count: history.length }));
+        const alarms = filterAlarms(history.filter(a => LEVELS.includes(a.type)).map(a => alarmInfo(a, defs)), req.query)
+            .sort((a, b) => (b.ontime || 0) - (a.ontime || 0));
+        send(res, alarms, meta({ from, to, count: alarms.length, counts: countLevels(alarms) }));
+    }));
+
+    // thresholds of the alarms of the tags (alarm definitions of FUXA)
+    app.get('/alarms/config', h(async (req, res) => {
+        const prj = await project();
+        const tags = {};
+        api.allTags(prj).forEach(t => { tags[t.id] = t; });
+        const list = (prj.alarms || []).map(a => alarmConfig(a, tags));
+        send(res, list, meta({ count: list.length, levels: LEVELS }));
+    }));
+
+    app.put('/alarms/config/:name', h(async (req, res) => {
+        const input = body(req);
+        const name = String(req.params.name || '').trim();
+        if (!/^[^\^~]{1,80}$/.test(name)) {
+            throw badRequest('Nom d’alarme invalide (80 caractères au plus, sans ^ ni ~).', { field: 'name' });
+        }
+        const prj = await project();
+        const tag = findTags(api.allTags(prj), [String(input.tag || '')])[0];
+        const old = (prj.alarms || []).find(a => a.name === name) || {};
+        const alarm = Object.assign({}, old, { name, property: Object.assign({}, old.property, { variableId: tag.id }) });
+        const levels = input.levels && typeof input.levels === 'object' ? input.levels : {};
+        LEVELS.forEach(level => { alarm[level] = alarmLevel(level, levels[level], old[level]); });
+        if (!LEVELS.some(level => alarm[level].enabled)) {
+            throw badRequest('Activer au moins un niveau (critique, haute, basse ou information).', { field: 'levels' });
+        }
+        alarm.actions = old.actions || { enabled: false, values: [] };
+        await runtime.project.setProjectData('set-alarm', alarm);
+        await runtime.update('set-alarm', alarm);
+        const tags = {};
+        api.allTags(prj).forEach(t => { tags[t.id] = t; });
+        send(res, alarmConfig(alarm, tags), meta(), old.name ? 200 : 201);
+    }));
+
+    app.delete('/alarms/config/:name', h(async (req, res) => {
+        const prj = await project();
+        const old = (prj.alarms || []).find(a => a.name === req.params.name);
+        if (!old) {
+            throw notFound('alarm_not_found', `Alarme inconnue dans le site ${siteId} : ${req.params.name}`);
+        }
+        await runtime.project.setProjectData('del-alarm', old);
+        await runtime.update('del-alarm', old);
+        send(res, { name: old.name, deleted: true }, meta());
     }));
 
     app.post('/alarms/ack', h(async (req, res) => {
@@ -452,11 +514,83 @@ function deviceInfo(device) {
 }
 
 /** alarm: alarm_id = <name of the alarm>^~^<type> (id of FUXA), tag of the alarm */
+/** levels of priority of the alarms of FUXA, from the most critical */
+const LEVELS = ['highhigh', 'high', 'low', 'info'];
+const LEVEL_TEXT = { highhigh: 'critique', high: 'haute', low: 'basse', info: 'information' };
+/** state of an alarm (FUXA): N active, NF ended not acknowledged, NA active acknowledged */
+const STATUS_TEXT = { N: 'active', NF: 'terminée, non acquittée', NA: 'active, acquittée', '': 'terminée' };
+const BIG = 1e12;
+
+/**
+ * level of an alarm definition from the API: { enabled, condition: 'above' | 'below' | 'between', value, min, max,
+ * text, group, delay (s before the alarm), ackmode: 'ackactive' | 'ackpassive' | 'float' }
+ * FUXA: the alarm is on when min <= value <= max
+ */
+function alarmLevel(level, input, old) {
+    old = old || {};
+    input = input || {};
+    const enabled = !!input.enabled;
+    const num = (v, name) => {
+        const n = Number(v);
+        if (v === '' || v === null || v === undefined || !Number.isFinite(n)) {
+            throw badRequest(`Niveau ${LEVEL_TEXT[level]} : ${name} invalide (nombre attendu).`, { level, field: name });
+        }
+        return n;
+    };
+    let min = Number.isFinite(old.min) ? old.min : 0, max = Number.isFinite(old.max) ? old.max : 0;
+    if (enabled) {
+        if (input.condition === 'above') {
+            min = num(input.value, 'value');
+            max = BIG;
+        } else if (input.condition === 'below') {
+            min = -BIG;
+            max = num(input.value, 'value');
+        } else if (input.condition === 'between') {
+            min = num(input.min, 'min');
+            max = num(input.max, 'max');
+            if (min > max) {
+                throw badRequest(`Niveau ${LEVEL_TEXT[level]} : min doit être inférieur ou égal à max.`, { level });
+            }
+        } else {
+            throw badRequest(`Niveau ${LEVEL_TEXT[level]} : condition above, below ou between attendue.`, { level, field: 'condition' });
+        }
+    }
+    const delay = Number(input.delay);
+    return Object.assign({}, old, {
+        enabled, min, max,
+        checkdelay: old.checkdelay > 0 ? old.checkdelay : 1,
+        timedelay: Number.isFinite(delay) && delay >= 0 ? Math.min(delay, 86400) : (old.timedelay || 1),
+        text: String(input.text !== undefined ? input.text : old.text || '').slice(0, 200),
+        group: String(input.group !== undefined ? input.group : old.group || '').slice(0, 100),
+        ackmode: ['ackactive', 'ackpassive', 'float'].includes(input.ackmode) ? input.ackmode : (old.ackmode || 'ackactive'),
+        bkcolor: old.bkcolor || '', color: old.color || ''
+    });
+}
+
+/** alarm definition for the API: tag, equipment and the levels with a readable condition */
+function alarmConfig(a, tags) {
+    const tag = tags[a.property && a.property.variableId];
+    const levels = {};
+    LEVELS.forEach(level => {
+        const l = a[level] || {};
+        const condition = l.max >= BIG ? 'above' : l.min <= -BIG ? 'below' : 'between';
+        levels[level] = {
+            enabled: !!l.enabled, condition, value: condition === 'above' ? l.min : condition === 'below' ? l.max : null,
+            min: condition === 'between' ? l.min : null, max: condition === 'between' ? l.max : null,
+            text: l.text || '', group: l.group || '', delay: l.timedelay || 0, ackmode: l.ackmode || 'ackactive', levelText: LEVEL_TEXT[level]
+        };
+    });
+    return { name: a.name, tag: tag ? tag.name : null, tagId: tag ? tag.id : (a.property && a.property.variableId) || null, device: tag ? tag.deviceName : null, levels };
+}
+
 function alarmInfo(a, defs) {
     const id = a.type && !String(a.name).includes('^~^') ? `${a.name}^~^${a.type}` : String(a.name);
     const name = id.split('^~^')[0];
+    const def = (defs && defs[name]) || {};
     return {
-        alarm_id: id, name: name, tag: (defs && defs[name]) || null, type: a.type, text: a.text || '', group: a.group || '', status: a.status || '',
+        alarm_id: id, name: name, tag: def.tag || null, device: def.device || null, type: a.type,
+        priority: LEVEL_TEXT[a.type] || a.type, critical: a.type === 'highhigh', statusText: STATUS_TEXT[a.status || ''] || a.status,
+        text: a.text || '', group: a.group || '', status: a.status || '',
         value: a.value === undefined ? null : a.value,
         ontime: a.ontime || null, offtime: a.offtime || null, acktime: a.acktime || null,
         toack: a.toack === undefined ? undefined : !!a.toack, userack: a.userack || undefined

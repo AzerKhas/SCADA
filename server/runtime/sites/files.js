@@ -16,6 +16,7 @@ const MANIFEST = 'pages.json';
 const CONFIGURATION_VIEW = 'v_site_configuration';
 const CURVES_VIEW = 'v_site_courbes';
 const HISTORY_VIEW = 'v_site_historique';
+const ALARMS_VIEW = 'v_site_alarmes';
 /** wait the end of the saves of the editor (one save per view, layout...) before writing */
 const WRITE_DELAY = 1500;
 
@@ -61,6 +62,21 @@ async function upgradeConfigurationPage(project) {
         await runtime.update('set-view', upgraded);
         logger.info('site files: page Configuration updated (configuration.html shown in the page)');
     }
+    // page Alarmes (alarmes.html) for the sites made before it
+    const added = require('./template').addAlarmsPage(project, siteName);
+    if (added) {
+        await runtime.project.setProjectData('set-view', added.view);
+        await runtime.update('set-view', added.view);
+        await runtime.project.setProjectData('layout', added.layout);
+        await runtime.update('layout', added.layout);
+        logger.info('site files: page Alarmes added (alarmes.html shown in the page, menu)');
+    }
+}
+
+/** page of FUXA showing a file of the folder of the site in a frame (Configuration, Alarmes) */
+function showsFile(view, file) {
+    return Object.values(view.items || {}).some(item => item.type === 'svg-ext-own_ctrl-iframe' &&
+        String((item.property && item.property.address) || '').endsWith(file));
 }
 
 /** the page Configuration that shows configuration.html is not copied in configuration.html */
@@ -113,6 +129,8 @@ async function writeFiles() {
     fs.writeFileSync(path.join(siteDir, 'api.html'), apiHtml());
     // versions and backups of the site
     fs.copyFileSync(path.join(__dirname, 'versions.client.js'), path.join(siteDir, 'versions.js'));
+    fs.copyFileSync(path.join(__dirname, 'alarms.client.js'), path.join(siteDir, 'alarmes.js'));
+    files.push({ file: 'alarmes.js', page: 'Alarmes (script)', viewId: null });
     fs.writeFileSync(path.join(siteDir, 'versions.html'), versionsHtml());
     files.push({ file: 'versions.html', page: 'Versions', viewId: null }, { file: 'versions.js', page: 'Versions (script)', viewId: null });
     files.push({ file: 'api.html', page: 'API', viewId: null }, { file: 'site-api.js', page: 'API (script)', viewId: null },
@@ -164,7 +182,9 @@ function pageHtml(view, project, file) {
     const tags = tagNames(project);
     const items = Object.values(view.items || {});
     const liveUrl = `/site/${encodeURIComponent(siteName)}/home/${encodeURIComponent(view.name)}`;
-    const live = view.id === CURVES_VIEW ? curvesLive() : view.id === HISTORY_VIEW ? historyLive() : '';
+    const live = view.id === CURVES_VIEW ? curvesLive() : view.id === HISTORY_VIEW ? historyLive() : view.id === ALARMS_VIEW ? alarmsLive() : '';
+    // the page that shows this file in a frame: only the live part
+    const own = showsFile(view, file);
     return document(`${view.name} - ${siteName}`, `${navBar(file)}
 <header>
   <h1>${esc(view.name)} <small>${esc(siteName)}</small></h1>
@@ -172,14 +192,14 @@ function pageHtml(view, project, file) {
      Version en direct : <a href="${liveUrl}">${esc(liveUrl)}</a></p>
 </header>
 ${live}
-${live ? '<h2>Synoptique de la page (copie de l\'éditeur)</h2>' : ''}
+${own ? '' : `${live ? '<h2>Synoptique de la page (copie de l\'éditeur)</h2>' : ''}
 <section class="synoptic" style="background:${esc(profile.bkcolor || '#ffffff')};width:${Number(profile.width) || 1280}px;height:${Number(profile.height) || 720}px">
 ${view.svgcontent || ''}
 </section>
 <section>
   <h2>Objets de la page (${items.length})</h2>
   ${itemsTable(items, tags)}
-</section>
+</section>`}
 ${jsonBlock('fuxa-view', view)}`);
 }
 
@@ -322,6 +342,15 @@ function curvesLive() {
 <script src="courbes.js"></script>`;
 }
 
+/** alarmes.html: alarms of the site (active, history, thresholds), made by alarmes.js with the API of the site */
+function alarmsLive() {
+    return `<section>
+  <div id="alarms-app" data-site="${esc(siteName)}"></div>
+</section>
+<script src="site-api.js"></script>
+<script src="alarmes.js"></script>`;
+}
+
 /** historiques.html: table of the history of the tags of the page Courbes, from the API */
 function historyLive() {
     return `<section>
@@ -436,9 +465,12 @@ function apiHtml() {
 <section>
   <h2>Alarmes</h2>
   ${table(['Méthode', 'Adresse', 'Paramètres / corps', 'Réponse (data)'], [
-        row('GET', `${base}/alarms`, 'type : highhigh, high, low, info\ntag : nom du tag\ntext : texte', 'alarmes actives : alarm_id, tag, type, text, status, ontime, toack'),
-        row('GET', `${base}/alarms/history`, 'from, to (24 dernières heures si absent)', 'historique des alarmes'),
+        row('GET', `${base}/alarms`, 'type : highhigh, high, low, info (plusieurs : a,b)\ndevice : équipement\ntag : nom du tag\ntext : texte du message', 'alarmes actives (critiques d’abord) : alarm_id, tag, device, type, priority, critical, text, value, statusText, ontime, acktime, toack ; meta.counts : nombre par priorité'),
+        row('GET', `${base}/alarms/history`, 'from, to (24 dernières heures si absent)\ntype, device, tag, text : comme ci-dessus', 'historique : début, fin, acquittement, valeur, état'),
         row('POST', `${base}/alarms/{alarm_id}/ack`, '', 'alarme acquittée'),
+        row('GET', `${base}/alarms/config`, '', 'seuils d’alarme des tags : name, tag, device, levels (highhigh, high, low, info)'),
+        row('PUT', `${base}/alarms/config/{name}`, '{ "tag": "nom", "levels": { "highhigh": { "enabled": true, "condition": "above | below | between", "value": 3.9, "min", "max", "text", "group", "delay": 5, "ackmode": "ackactive | ackpassive | float" } } }', 'alarme créée (201) ou modifiée'),
+        row('DELETE', `${base}/alarms/config/{name}`, '', 'alarme supprimée'),
         row('POST', `${base}/alarms/ack`, '', 'toutes les alarmes acquittées')
     ])}
 </section>
@@ -722,6 +754,15 @@ function document(title, body) {
   pre.diff { max-height: 520px; padding: 0; } pre.diff span { display: block; padding: 0 8px; white-space: pre-wrap; word-break: break-all; }
   pre.diff i { display: inline-block; min-width: 70px; color: #90a4ae; font-style: normal; }
   .d-add { background: #e8f5e9; color: #1b5e20; } .d-del { background: #ffebee; color: #b71c1c; } .d-skip { color: #90a4ae; font-style: italic; background: #f5f5f5; }
+  .lvl { display: inline-block; padding: 1px 8px; border-radius: 10px; color: #fff; font-size: 12px; font-weight: bold; }
+  .lvl-highhigh { background: #c62828; color: #fff; } .lvl-high { background: #ef6c00; color: #fff; } .lvl-low { background: #f9a825; color: #222; } .lvl-info { background: #1565c0; color: #fff; }
+  tr.row-critical td { background: #ffebee; } tr.row-critical td:first-child { border-left: 4px solid #c62828; }
+  .alarm-counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; } .alarm-counts .cnt { padding: 6px 12px; border-radius: 6px; font-weight: bold; }
+  .alarm-counts .toack { background: #eceff1; color: #37474f; }
+  .blink { animation: blink 1s step-start infinite; } @keyframes blink { 50% { opacity: 0.45; } }
+  .tabs { display: flex; gap: 4px; border-bottom: 2px solid #1f3864; margin: 12px 0 6px; }
+  .tabs button { border: 1px solid #cfd8dc; border-bottom: none; background: #eceff1; border-radius: 6px 6px 0 0; padding: 7px 16px; }
+  .tabs button.on { background: #1f3864; color: #fff; border-color: #1f3864; }
   .sets-bar { background: #e8eef7; border-radius: 6px; padding: 6px 10px; }
   .picker-back { position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 50; display: flex; align-items: center; justify-content: center; }
   .picker { background: #fff; border-radius: 8px; padding: 12px 16px; width: min(1000px, 94vw); max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }

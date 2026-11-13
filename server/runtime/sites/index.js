@@ -210,6 +210,8 @@ function sendSiteFile(site, file, res) {
     if (!siteFiles(site).some(f => f.file === file)) {
         return sendPage(res, 404, 'Fichier introuvable', `Le fichier « ${escapeHtml(file)} » n'existe pas dans le site « ${escapeHtml(site.name)} ».`);
     }
+    // written again at each save of the site: the browser checks it each time (no old script in its cache)
+    res.set('Cache-Control', 'no-cache');
     res.type(file.endsWith('.js') ? 'application/javascript' : 'html').sendFile(path.join(sitesDir, site.name, file));
 }
 

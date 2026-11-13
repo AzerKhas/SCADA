@@ -61,7 +61,8 @@ function router(manager, settings, logger) {
                     'GET /api/v1/sites/{site_id}/values', 'GET /api/v1/sites/{site_id}/history'],
                 curves: ['GET /api/v1/sites/{site_id}/curves', 'GET /api/v1/sites/{site_id}/curves/{graph_id}/data'],
                 alarms: ['GET /api/v1/sites/{site_id}/alarms', 'GET /api/v1/sites/{site_id}/alarms/history',
-                    'POST /api/v1/sites/{site_id}/alarms/{alarm_id}/ack', 'POST /api/v1/sites/{site_id}/alarms/ack'],
+                    'POST /api/v1/sites/{site_id}/alarms/{alarm_id}/ack', 'POST /api/v1/sites/{site_id}/alarms/ack',
+                    'GET /api/v1/sites/{site_id}/alarms/config', 'PUT|DELETE /api/v1/sites/{site_id}/alarms/config/{name}'],
                 versions: ['GET /api/v1/sites/{site_id}/versions', 'POST /api/v1/sites/{site_id}/versions { comment }',
                     'GET /api/v1/sites/{site_id}/versions/{version_id}', 'GET /api/v1/sites/{site_id}/versions/{version_id}/changes?with=',
                     'GET /api/v1/sites/{site_id}/versions/{version_id}/diff?file=&with=', 'POST /api/v1/sites/{site_id}/versions/{version_id}/restore'],
@@ -163,7 +164,9 @@ function router(manager, settings, logger) {
             throw new ApiError(503, site.stopped ? 'site_stopped' : 'site_starting',
                 site.stopped ? `Le site « ${site.name} » est arrêté (POST /api/v1/sites/${site.name}/start).` : `Le site « ${site.name} » démarre, réessayez dans quelques secondes.`);
         }
-        forward(site, req, res, `/site/${encodeURIComponent(site.name)}/api/v1/${service}`);
+        // the parts of the path are decoded by express: encoded again (names with spaces, accents...)
+        const path = service.split('/').map(part => encodeURIComponent(part)).join('/');
+        forward(site, req, res, `/site/${encodeURIComponent(site.name)}/api/v1/${path}`);
     }));
 
     app.use(h(req => {
