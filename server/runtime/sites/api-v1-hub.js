@@ -61,7 +61,13 @@ function router(manager, settings, logger) {
                     'GET /api/v1/sites/{site_id}/values', 'GET /api/v1/sites/{site_id}/history'],
                 curves: ['GET /api/v1/sites/{site_id}/curves', 'GET /api/v1/sites/{site_id}/curves/{graph_id}/data'],
                 alarms: ['GET /api/v1/sites/{site_id}/alarms', 'GET /api/v1/sites/{site_id}/alarms/history',
-                    'POST /api/v1/sites/{site_id}/alarms/{alarm_id}/ack', 'POST /api/v1/sites/{site_id}/alarms/ack']
+                    'POST /api/v1/sites/{site_id}/alarms/{alarm_id}/ack', 'POST /api/v1/sites/{site_id}/alarms/ack'],
+                versions: ['GET /api/v1/sites/{site_id}/versions', 'POST /api/v1/sites/{site_id}/versions { comment }',
+                    'GET /api/v1/sites/{site_id}/versions/{version_id}', 'GET /api/v1/sites/{site_id}/versions/{version_id}/changes?with=',
+                    'GET /api/v1/sites/{site_id}/versions/{version_id}/diff?file=&with=', 'POST /api/v1/sites/{site_id}/versions/{version_id}/restore'],
+                backups: ['GET /api/v1/sites/{site_id}/backups', 'POST /api/v1/sites/{site_id}/backups { comment }',
+                    'GET /api/v1/sites/{site_id}/backups/{backup_id}', 'DELETE /api/v1/sites/{site_id}/backups/{backup_id}',
+                    'POST /api/v1/sites/{site_id}/backups/{backup_id}/restore']
             }
         });
     }));
@@ -116,6 +122,34 @@ function router(manager, settings, logger) {
 
     app.get('/sites/:site_id/export', h(async (req, res) => {
         await manager.exportZip(findSite(req.params.site_id), res);
+    }));
+
+    // full backups of the folder of the site (sites/_sauvegardes/<site_id>/)
+    app.get('/sites/:site_id/backups', h((req, res) => {
+        const list = manager.backups(findSite(req.params.site_id));
+        send(res, list, { site_id: req.params.site_id, count: list.length });
+    }));
+
+    app.post('/sites/:site_id/backups', withBody, h((req, res) => {
+        const site = findSite(req.params.site_id);
+        const input = req.body && typeof req.body === 'object' ? req.body : {};
+        send(res, manager.createBackup(site, input.comment), { site_id: site.name }, 201);
+    }));
+
+    app.get('/sites/:site_id/backups/:backup_id', h((req, res) => {
+        const backup = manager.backup(findSite(req.params.site_id), req.params.backup_id);
+        res.download(backup.path, backup.file);
+    }));
+
+    app.delete('/sites/:site_id/backups/:backup_id', h((req, res) => {
+        const site = findSite(req.params.site_id);
+        manager.deleteBackup(site, req.params.backup_id);
+        send(res, { backup_id: req.params.backup_id, deleted: true }, { site_id: site.name });
+    }));
+
+    app.post('/sites/:site_id/backups/:backup_id/restore', h(async (req, res) => {
+        const site = findSite(req.params.site_id);
+        send(res, await manager.restoreBackup(site, req.params.backup_id), { site_id: site.name });
     }));
 
     // the other services are answered by the instance of the site

@@ -305,6 +305,92 @@ function router(runtime, settings, siteId) {
         send(res, { alarm_id: id, acknowledged: !!changed }, meta());
     }));
 
+    // ---------------------------------------------------------------- versions
+    const versions = require('./versions');
+    const findVersion = async id => {
+        const version = await versions.get(id);
+        if (!version) {
+            throw notFound('version_not_found', `Version inconnue dans le site ${siteId} : ${id}`);
+        }
+        return version;
+    };
+    const versionInfo = v => ({ version_id: v.id, time: v.time, type: v.type, typeText: versions.TYPES[v.type] || v.type, comment: v.comment || '' });
+    /** version compared: ?with=<version_id> | current | previous (default: the previous version) */
+    const compareWith = async (version, other) => {
+        if (other && other !== 'previous') {
+            return findVersion(other);
+        }
+        const all = versions.list();
+        const index = all.findIndex(v => v.id === version.id);
+        const previous = index >= 0 ? all[index + 1] : null;
+        return previous ? versions.get(previous.id) : null;
+    };
+
+    app.get('/versions', h((req, res) => {
+        const all = versions.list().map(v => Object.assign({ version_id: v.id }, v));
+        all.forEach(v => { delete v.id; delete v.hash; });
+        send(res, all, meta({ count: all.length }));
+    }));
+
+    app.post('/versions', h(async (req, res) => {
+        const input = req.body && typeof req.body === 'object' ? req.body : {};
+        const comment = String(input.comment || '').trim().slice(0, 200);
+        if (!comment) {
+            throw badRequest('Champ comment manquant : description de la version.', { field: 'comment' });
+        }
+        const entry = await versions.snapshot({ type: 'manual', comment });
+        send(res, Object.assign(versionInfo(entry), { summary: entry.summary, size: entry.size }), meta(), 201);
+    }));
+
+    app.get('/versions/:version_id', h(async (req, res) => {
+        const version = await findVersion(req.params.version_id);
+        const previous = await compareWith(version, 'previous');
+        const changes = previous ? versions.compare(previous, version) : [];
+        send(res, Object.assign(versionInfo(version), {
+            pages: ((version.project.hmi && version.project.hmi.views) || []).map(v => ({ id: v.id, name: v.name })),
+            files: Object.keys(version.files || {}),
+            changes,
+            summary: previous ? versions.summarize(changes) : 'première version'
+        }), meta());
+    }));
+
+    app.get('/versions/:version_id/changes', h(async (req, res) => {
+        const version = await findVersion(req.params.version_id);
+        const other = await compareWith(version, req.query.with);
+        if (!other) {
+            return send(res, [], meta({ from: null, to: version.id, summary: 'première version' }));
+        }
+        // from the older to the newer
+        const [a, b] = other.time <= version.time ? [other, version] : [version, other];
+        const changes = versions.compare(a, b);
+        send(res, changes, meta({ from: a.id, to: b.id, summary: versions.summarize(changes), count: changes.length }));
+    }));
+
+    app.get('/versions/:version_id/diff', h(async (req, res) => {
+        const version = await findVersion(req.params.version_id);
+        const file = String(req.query.file || '');
+        const other = await compareWith(version, req.query.with);
+        const [a, b] = !other ? [null, version] : other.time <= version.time ? [other, version] : [version, other];
+        const files = Array.from(new Set(Object.keys((a && a.files) || {}).concat(Object.keys(b.files || {})))).sort();
+        if (!file) {
+            throw badRequest(`Paramètre file manquant : ${files.join(', ')}`, { param: 'file', files });
+        }
+        if (!files.includes(file)) {
+            throw notFound('file_not_found', `Fichier absent de ces versions : ${file}`);
+        }
+        const lines = versions.diffLines(a && a.files ? a.files[file] : '', b.files ? b.files[file] : '');
+        send(res, lines, meta({ from: a ? a.id : null, to: b.id, file, added: lines.filter(l => l.type === '+').length, removed: lines.filter(l => l.type === '-').length }));
+    }));
+
+    app.post('/versions/:version_id/restore', h(async (req, res) => {
+        const version = await findVersion(req.params.version_id);
+        if (version.id === 'current') {
+            throw badRequest('L\'état actuel ne peut pas être restauré.');
+        }
+        await versions.restore(version.id);
+        send(res, Object.assign(versionInfo(version), { restored: true }), meta());
+    }));
+
     // unknown service of the API v1
     app.use(h(req => {
         throw notFound('unknown_service', `Service inconnu : ${req.method} /api/v1/sites/${siteId}${req.path}`);

@@ -35,6 +35,7 @@ function init(_runtime, settings, _logger, _siteName) {
     siteName = _siteName;
     siteDir = path.dirname(settings.workDir);
     siteSettings = settings;
+    require('./versions').init(runtime, settings, logger);
     // the project is saved by setProject (import, new site) or setProjectData (editor)
     ['setProject', 'setProjectData'].forEach(fnc => {
         const original = runtime.project[fnc];
@@ -97,16 +98,23 @@ async function writeFiles() {
     const menu = ((project.hmi.layout && project.hmi.layout.navigation && project.hmi.layout.navigation.items) || []).map(item => item.view);
     const rankInMenu = f => { const i = menu.indexOf(f.viewId); return i < 0 ? menu.length : i; };
     navFiles = files.slice().sort((a, b) => rankInMenu(a) - rankInMenu(b));
+    const written = {};
     pageViews.forEach((view, i) => {
-        fs.writeFileSync(path.join(siteDir, pageFiles[i].file), pageHtml(view, project, pageFiles[i].file));
+        written[pageFiles[i].file] = pageHtml(view, project, pageFiles[i].file);
+        fs.writeFileSync(path.join(siteDir, pageFiles[i].file), written[pageFiles[i].file]);
     });
-    fs.writeFileSync(path.join(siteDir, 'configuration.html'), configurationHtml(project, configurationView, pageFiles));
+    written['configuration.html'] = configurationHtml(project, configurationView, pageFiles);
+    fs.writeFileSync(path.join(siteDir, 'configuration.html'), written['configuration.html']);
     // access to the data of the site (API) for the pages of the folder
     fs.copyFileSync(path.join(__dirname, 'site-api.client.js'), path.join(siteDir, 'site-api.js'));
     // scripts of the page Courbes and of the configuration of its graphs
     fs.copyFileSync(path.join(__dirname, 'courbes.client.js'), path.join(siteDir, 'courbes.js'));
     fs.copyFileSync(path.join(__dirname, 'graphs-editor.client.js'), path.join(siteDir, 'configuration-graphes.js'));
     fs.writeFileSync(path.join(siteDir, 'api.html'), apiHtml());
+    // versions and backups of the site
+    fs.copyFileSync(path.join(__dirname, 'versions.client.js'), path.join(siteDir, 'versions.js'));
+    fs.writeFileSync(path.join(siteDir, 'versions.html'), versionsHtml());
+    files.push({ file: 'versions.html', page: 'Versions', viewId: null }, { file: 'versions.js', page: 'Versions (script)', viewId: null });
     files.push({ file: 'api.html', page: 'API', viewId: null }, { file: 'site-api.js', page: 'API (script)', viewId: null },
         { file: 'courbes.js', page: 'Courbes (script)', viewId: null }, { file: 'configuration-graphes.js', page: 'Configuration des graphiques (script)', viewId: null });
 
@@ -120,6 +128,8 @@ async function writeFiles() {
     });
     fs.writeFileSync(path.join(siteDir, MANIFEST), JSON.stringify({ site: siteName, updated: new Date().toISOString(), files }, null, 2));
     logger.info(`site files: ${files.length} HTML files written in ${siteDir}`);
+    // version of the site (project, configurations, HTML files of the pages)
+    await require('./versions').snapshot({ files: written }).catch(err => logger.error(`site versions: ${err}`));
 }
 
 /** position of configuration.html: after accueil and courbes, like in the menu */
@@ -428,6 +438,22 @@ function apiHtml() {
     ])}
 </section>
 <section>
+  <h2>Versions et sauvegardes</h2>
+  ${table(['Méthode', 'Adresse', 'Paramètres / corps', 'Réponse (data)'], [
+        row('GET', `${base}/versions`, '', 'versions : version_id, date, type (automatique, manuelle, avant restauration, restauration), résumé des modifications'),
+        row('POST', `${base}/versions`, '{ "comment": "description" }', 'version manuelle créée (201)'),
+        row('GET', `${base}/versions/{version_id}`, '', 'pages, fichiers et modifications par rapport à la version précédente'),
+        row('GET', `${base}/versions/{version_id}/changes`, 'with : previous (défaut), current ou version_id', 'modifications : catégorie, élément, action, détails'),
+        row('GET', `${base}/versions/{version_id}/diff`, 'file : fichier HTML\nwith : previous, current ou version_id', 'lignes ajoutées (+), supprimées (-), identiques'),
+        row('POST', `${base}/versions/{version_id}/restore`, '', 'version restaurée (l\'état actuel est conservé avant)'),
+        row('GET', `${base}/backups`, '', 'sauvegardes complètes du dossier du site'),
+        row('POST', `${base}/backups`, '{ "comment": "description" }', 'sauvegarde créée (201)'),
+        row('GET', `${base}/backups/{backup_id}`, '', 'fichier .zip de la sauvegarde'),
+        row('POST', `${base}/backups/{backup_id}/restore`, '', 'dossier du site remplacé par la sauvegarde (le dossier actuel est sauvegardé avant)'),
+        row('DELETE', `${base}/backups/{backup_id}`, '', 'sauvegarde supprimée')
+    ])}
+</section>
+<section>
   <h2>Tester</h2>
   <div class="period">
     <select id="method"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select>
@@ -488,6 +514,20 @@ function apiHtml() {
     }).catch(function (err) { result.textContent = err.message; });
   });
 </script>`);
+}
+
+/** versions.html: versions of the site and full backups of its folder (versions.js, API v1) */
+function versionsHtml() {
+    return document(`Versions - ${siteName}`, `${navBar('versions.html')}
+<header>
+  <h1>Versions et sauvegardes <small>${esc(siteName)}</small></h1>
+  <p class="info">Une version du site est conservée à chaque enregistrement de l'éditeur : pages, connexions, tags, alarmes, graphiques,
+     configurations et fichiers HTML. Les enregistrements faits à moins de 5 minutes d'intervalle sont regroupés.
+     Une sauvegarde complète contient tout le dossier du site (avec l'historique des valeurs) ; une sauvegarde automatique est faite chaque jour.</p>
+</header>
+<div id="versions-app" data-site="${esc(siteName)}"></div>
+<script src="site-api.js"></script>
+<script src="versions.js"></script>`);
 }
 
 /** graphs of the page Courbes (graphs.js): summary and editor (configuration-graphes.js) */
@@ -629,7 +669,7 @@ function navBar(current) {
     return `<nav class="sitenav" id="sitenav">
   <a href="${base}/home" class="back" onclick="if (history.length > 1 && document.referrer) { history.back(); return false; }">&#8592; Retour</a>
   ${link(`${base}/home`, 'Supervision')}
-  <span class="sep"></span>${pages}${link('api.html', 'API', current === 'api.html')}
+  <span class="sep"></span>${pages}${link('versions.html', 'Versions', current === 'versions.html')}${link('api.html', 'API', current === 'api.html')}
   <span class="sep"></span>${link(`${base}/editor`, 'Éditeur')}
 </nav>
 <script>if (window.self !== window.top) { document.getElementById('sitenav').style.display = 'none'; }</script>`;
@@ -669,6 +709,9 @@ function document(title, body) {
   .legend small { color: #78909c; }
   .pan-bar { position: relative; height: 16px; margin: 6px 0 2px; background: #e3e8ef; border-radius: 8px; cursor: pointer; user-select: none; touch-action: none; }
   .pan-thumb { position: absolute; top: 0; bottom: 0; min-width: 24px; background: #90a4ae; border-radius: 8px; cursor: grab; }
+  pre.diff { max-height: 520px; padding: 0; } pre.diff span { display: block; padding: 0 8px; white-space: pre-wrap; word-break: break-all; }
+  pre.diff i { display: inline-block; min-width: 70px; color: #90a4ae; font-style: normal; }
+  .d-add { background: #e8f5e9; color: #1b5e20; } .d-del { background: #ffebee; color: #b71c1c; } .d-skip { color: #90a4ae; font-style: italic; background: #f5f5f5; }
   .pan-labels { display: flex; justify-content: space-between; font-size: 12px; color: #607d8b; }
   .sitenav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: -20px -20px 18px -20px; padding: 8px 20px; background: #1f3864; position: sticky; top: 0; z-index: 10; }
   .sitenav a { color: #fff; text-decoration: none; padding: 5px 10px; border-radius: 3px; font-size: 14px; }

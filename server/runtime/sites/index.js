@@ -38,6 +38,10 @@ const EXPORT_SKIP = ['_logs', 'site.log'];
 const IMPORT_LIMIT = 1024 * 1024 * 1024;
 /** time to wait for a new instance before sending its first project */
 const START_TIMEOUT = 60000;
+/** folder of the full backups of the sites: sites/_sauvegardes/<name>/ */
+const BACKUP_DIR = '_sauvegardes';
+/** automatic backups kept for each site (one per day) */
+const BACKUP_AUTO_KEEP = 7;
 
 var settings;
 var logger;
@@ -69,9 +73,17 @@ function init(app, server, _settings, _logger) {
         remove: deleteSite,
         start: startSite,
         stop: stopSite,
-        exportZip: exportSite
+        exportZip: exportSite,
+        backups: listBackups,
+        backup: findBackup,
+        createBackup: (site, comment) => createBackup(site, 'manual', comment),
+        deleteBackup: deleteBackup,
+        restoreBackup: restoreBackup
     }, settings, logger));
     app.use(onRequest);
+    // automatic backups: 2 minutes after the start, then every hour
+    setTimeout(autoBackups, 2 * 60 * 1000);
+    setInterval(autoBackups, 3600 * 1000);
     server.on('upgrade', onUpgrade);
     process.on('exit', stopAll);
     Object.values(sites).filter(site => !site.stopped).forEach(site => start(site));
@@ -234,6 +246,19 @@ async function createSite(name) {
  * the site can stay started (its files are only read)
  */
 async function exportSite(site, res) {
+    const { buffer, entries } = buildZip(site);
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    res.set({
+        'Content-Type': 'application/zip',
+        'Content-Length': buffer.length,
+        'Content-Disposition': `attachment; filename="Site_${site.name}_${stamp}.zip"`
+    });
+    res.end(buffer);
+    logger.info(`sites: '${site.name}' exported (${entries.length} files, ${buffer.length} bytes)`);
+}
+
+/** .zip of the folder of the site: <name>/... (without the logs) */
+function buildZip(site) {
     const dir = path.join(sitesDir, site.name);
     const entries = [];
     const walk = (folder, prefix) => {
@@ -251,34 +276,20 @@ async function exportSite(site, res) {
         });
     };
     walk(dir, '');
-    const buffer = zip.create(entries);
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    res.set({
-        'Content-Type': 'application/zip',
-        'Content-Length': buffer.length,
-        'Content-Disposition': `attachment; filename="Site_${site.name}_${stamp}.zip"`
-    });
-    res.end(buffer);
-    logger.info(`sites: '${site.name}' exported (${entries.length} files, ${buffer.length} bytes)`);
+    return { buffer: zip.create(entries), entries };
 }
 
-/** new site from the .zip file of an exported site (body of the request) */
-async function importSite(req, name) {
-    name = validateNewName(name);
-    const buffer = await readRaw(req, IMPORT_LIMIT);
-    let entries;
-    try {
-        entries = zip.read(buffer);
-    } catch (err) {
-        throw httpError(400, 'invalid_zip', `Fichier invalide : ${err.message}`);
-    }
+/**
+ * files of an exported site written in a folder (site.json and the logs are not written)
+ * @returns number of files, or an error if the zip is not a site
+ */
+function extractSite(entries, dir) {
     // folder of the site in the zip: the folder with site.json (or _appdata), with or without a first folder
     const marker = entries.map(e => e.name).filter(n => /(^|\/)site\.json$/.test(n) || /(^|\/)_appdata\//.test(n))
         .map(n => n.replace(/(site\.json|_appdata\/.*)$/, '')).sort((a, b) => a.length - b.length)[0];
     if (marker === undefined) {
         throw httpError(400, 'not_a_site', 'Ce fichier n\'est pas un export de site (site.json et _appdata manquants).');
     }
-    const dir = path.join(sitesDir, name);
     fs.mkdirSync(dir, { recursive: true });
     let count = 0;
     entries.filter(e => e.name.startsWith(marker)).forEach(e => {
@@ -296,6 +307,126 @@ async function importSite(req, name) {
         fs.writeFileSync(target, e.data);
         count++;
     });
+    return count;
+}
+
+// ---------------------------------------------------------------- full backups of the sites
+
+/** sites/_sauvegardes/<name>/Sauvegarde_<name>_<date>.zip (+ .json: type, comment) */
+const backupDir = name => path.join(sitesDir, BACKUP_DIR, name);
+const BACKUP_TYPES = { auto: 'automatique', manual: 'manuelle', before: 'avant restauration' };
+
+function listBackups(site) {
+    const dir = backupDir(site.name);
+    if (!fs.existsSync(dir)) {
+        return [];
+    }
+    return fs.readdirSync(dir).filter(f => /^Sauvegarde_.+\.zip$/.test(f)).map(file => {
+        const id = file.replace(/\.zip$/, '');
+        let info = {};
+        try {
+            info = JSON.parse(fs.readFileSync(path.join(dir, `${id}.json`), 'utf8'));
+        } catch (err) {
+            // backup without description
+        }
+        const stat = fs.statSync(path.join(dir, file));
+        return {
+            backup_id: id, file, time: info.time || stat.mtime.getTime(), type: info.type || 'manual',
+            typeText: BACKUP_TYPES[info.type || 'manual'], comment: info.comment || '', size: stat.size, files: info.files || null
+        };
+    }).sort((a, b) => b.time - a.time);
+}
+
+function findBackup(site, id) {
+    const backup = listBackups(site).find(b => b.backup_id === id);
+    if (!backup) {
+        throw httpError(404, 'backup_not_found', `Sauvegarde inconnue pour le site « ${site.name} » : ${id}`);
+    }
+    return Object.assign(backup, { path: path.join(backupDir(site.name), backup.file) });
+}
+
+function createBackup(site, type, comment) {
+    const { buffer, entries } = buildZip(site);
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    const id = `Sauvegarde_${site.name}_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    const dir = backupDir(site.name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${id}.zip`), buffer);
+    fs.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify({ time: d.getTime(), type, comment: String(comment || '').slice(0, 200), files: entries.length }, null, 2));
+    // automatic backups: the last ones are kept
+    if (type === 'auto') {
+        listBackups(site).filter(b => b.type === 'auto').slice(BACKUP_AUTO_KEEP).forEach(b => deleteBackup(site, b.backup_id));
+    }
+    logger.info(`sites: '${site.name}' backup ${id} (${entries.length} files, ${buffer.length} bytes)`);
+    return listBackups(site).find(b => b.backup_id === id);
+}
+
+function deleteBackup(site, id) {
+    const backup = findBackup(site, id);
+    fs.unlinkSync(backup.path);
+    const info = path.join(backupDir(site.name), `${id}.json`);
+    if (fs.existsSync(info)) {
+        fs.unlinkSync(info);
+    }
+}
+
+/**
+ * restore a full backup: the current folder is saved in a backup first, then replaced by the folder of the backup
+ * (the site keeps its port; it is started again if it was started)
+ */
+async function restoreBackup(site, id) {
+    const backup = findBackup(site, id);
+    const entries = zip.read(fs.readFileSync(backup.path));
+    const before = createBackup(site, 'before', `Avant la restauration de ${backup.backup_id}`);
+    const wasStopped = !!site.stopped;
+    await stopProcess(site);
+    const dir = path.join(sitesDir, site.name);
+    const old = path.join(sitesDir, BACKUP_DIR, `_restauration_${site.name}_${Date.now()}`);
+    await moveFolder(dir, old);
+    try {
+        extractSite(entries, dir);
+    } catch (err) {
+        // the folder of the backup is not a site: the current folder comes back
+        fs.rmSync(dir, { recursive: true, force: true });
+        await moveFolder(old, dir);
+        throw err;
+    }
+    writeSiteFile(site);
+    fs.rmSync(old, { recursive: true, force: true });
+    if (!wasStopped) {
+        start(site);
+        await waitRunning(site);
+    }
+    logger.info(`sites: '${site.name}' restored from ${backup.backup_id}`);
+    return { restored: backup.backup_id, before: before.backup_id };
+}
+
+/** one automatic backup per day for each site (checked every hour) */
+function autoBackups() {
+    Object.values(sites).forEach(site => {
+        const last = listBackups(site).find(b => b.type === 'auto');
+        if (!last || Date.now() - last.time > 24 * 3600 * 1000) {
+            try {
+                createBackup(site, 'auto', 'Sauvegarde automatique quotidienne');
+            } catch (err) {
+                logger.error(`sites: '${site.name}' automatic backup failed: ${err.message}`);
+            }
+        }
+    });
+}
+
+/** new site from the .zip file of an exported site (body of the request) */
+async function importSite(req, name) {
+    name = validateNewName(name);
+    const buffer = await readRaw(req, IMPORT_LIMIT);
+    let entries;
+    try {
+        entries = zip.read(buffer);
+    } catch (err) {
+        throw httpError(400, 'invalid_zip', `Fichier invalide : ${err.message}`);
+    }
+    const count = extractSite(entries, path.join(sitesDir, name));
     const site = { name, port: await freePort(), created: new Date().toISOString() };
     sites[name] = site;
     writeSiteFile(site);
@@ -367,6 +498,10 @@ async function renameSite(site, newName) {
     }
     await stopProcess(site);
     await moveFolder(path.join(sitesDir, site.name), path.join(sitesDir, newName));
+    // the backups follow the site
+    if (fs.existsSync(backupDir(site.name)) && !fs.existsSync(backupDir(newName))) {
+        await moveFolder(backupDir(site.name), backupDir(newName));
+    }
     delete sites[site.name];
     logger.info(`sites: '${site.name}' renamed '${newName}'`);
     site.name = newName;

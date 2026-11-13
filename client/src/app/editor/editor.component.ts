@@ -1,5 +1,5 @@
 ﻿/* eslint-disable @angular-eslint/component-class-suffix */
-import { Component, Inject, OnInit, OnDestroy, AfterViewInit, ViewChild, ViewContainerRef, ComponentFactoryResolver, ElementRef } from '@angular/core';
+import { Component, Inject, OnInit, OnDestroy, AfterViewInit, ViewChild, ViewContainerRef, ComponentFactoryResolver, ElementRef, HostListener } from '@angular/core';
 import { ChangeDetectorRef } from '@angular/core';
 import { MatDialog as MatDialog, MatDialogRef as MatDialogRef, MAT_DIALOG_DATA as MAT_DIALOG_DATA} from '@angular/material/dialog';
 import { MatDrawer } from '@angular/material/sidenav';
@@ -126,6 +126,7 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
     private removedGaugeSettings: { [id: string]: GaugeSettings } = {};
 
     private subscriptionSave: Subscription;
+    private autoSaveTimer: any;
     private subscriptionLoad: Subscription;
     private destroy$ = new Subject<void>();
     private onboardingWizardHandled = false;
@@ -203,6 +204,12 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
             console.error('Error loadHMI');
         });
         this.changeDetector.detectChanges();
+        // custom-SCADA: automatic save of the drawing every 30 s (no loss if the editor is closed by accident)
+        this.autoSaveTimer = setInterval(() => {
+            if (this.hasUnsavedChanges()) {
+                this.onSaveProject();
+            }
+        }, 30000);
     }
 
     ngOnDestroy() {
@@ -216,6 +223,7 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
         } catch (e) {
             console.error(e);
         }
+        clearInterval(this.autoSaveTimer);
         this.onSaveProject();
         this.destroy$.next(null);
         this.destroy$.complete();
@@ -391,6 +399,26 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
      */
     private removeView(view: View) {
         this.projectService.removeView(view);
+    }
+
+    /** custom-SCADA: drawing of the current page changed and not yet saved (saved when the page changes or with Save) */
+    private hasUnsavedChanges(): boolean {
+        try {
+            return !!this.currentView && this.currentView.type !== ViewType.cards && this.currentView.type !== ViewType.maps &&
+                !!this.winRef.nativeWindow.svgEditor && this.getContent() !== this.currentView.svgcontent;
+        } catch (err) {
+            return false;
+        }
+    }
+
+    /** custom-SCADA: closing of the tab with changes not saved: they are saved and the browser asks a confirmation */
+    @HostListener('window:beforeunload', ['$event'])
+    onBeforeUnload(event: BeforeUnloadEvent) {
+        if (this.hasUnsavedChanges()) {
+            this.onSaveProject();
+            event.preventDefault();
+            event.returnValue = '';
+        }
     }
 
     private getContent() {
