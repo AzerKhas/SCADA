@@ -204,6 +204,7 @@ import { EditorViewsListComponent } from './editor/editor-views-list/editor-view
 import { EditorSitesListComponent } from './editor/editor-sites-list/editor-sites-list.component';
 import { SiteCurvesDialogComponent } from './editor/editor-sites-list/site-curves-dialog/site-curves-dialog.component';
 import { SiteHistoryDialogComponent } from './editor/editor-sites-list/site-history-dialog/site-history-dialog.component';
+import { SitePreviewDialogComponent } from './editor/editor-sites-list/site-preview-dialog/site-preview-dialog.component';
 import { SvgUtils } from './_helpers/svg-utils';
 import { FlexWidgetPropertyComponent } from './gauges/gauge-property/flex-widget-property/flex-widget-property.component';
 import { GraphSourceEditComponent } from './editor/graph-config/graph-source-edit/graph-source-edit.component';
@@ -434,6 +435,7 @@ export const myCustomTooltipDefaults: MatTooltipDefaultOptions = {
         EditorSitesListComponent,
         SiteCurvesDialogComponent,
         SiteHistoryDialogComponent,
+        SitePreviewDialogComponent,
         MapsLocationListComponent,
         MapsLocationPropertyComponent,
         MapsViewComponent,

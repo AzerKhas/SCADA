@@ -12,6 +12,7 @@ import { Chart } from '../../_models/chart';
 import { Device } from '../../_models/device';
 import { SiteCurvesDialogComponent, SiteCurvesData, SiteCurvesResult } from './site-curves-dialog/site-curves-dialog.component';
 import { HistoryDbConfig, SiteHistoryDialogComponent } from './site-history-dialog/site-history-dialog.component';
+import { SitePreviewData, SitePreviewDialogComponent } from './site-preview-dialog/site-preview-dialog.component';
 
 /**
  * custom-SCADA: panel "Sites" of the editor
@@ -188,9 +189,40 @@ export class EditorSitesListComponent implements OnInit, OnChanges {
         window.open(`/site/${encodeURIComponent(site.name)}/fichiers/api.html`, '_blank');
     }
 
-    /** supervision of the site (operator view) in a new tab */
-    onOpenSupervision(site: SiteInfo) {
-        window.open(site.url, '_blank');
+    /**
+     * mode exploitation: supervision of the site (operator view) in a new tab,
+     * on a page, else on the last page seen for this site (home.component)
+     */
+    onOpenSupervision(site: SiteInfo, page?: SitePage) {
+        window.open(page ? this.liveUrl(site, page) : site.url, '_blank');
+    }
+
+    /** mode exploitation of the site open in this editor (or of the main project) */
+    onOpenCurrentSupervision() {
+        const site = this.sites.find(s => s.name === this.currentSite);
+        window.open(site ? site.url : '/home', '_blank');
+    }
+
+    /** generated page of the site: diagnostic.html, versions.html... */
+    onOpenSiteFile(site: SiteInfo, file: string) {
+        window.open(`/site/${encodeURIComponent(site.name)}/fichiers/${file}`, '_blank');
+    }
+
+    /** preview of a page without leaving the editor: live supervision of the page or its HTML file */
+    onPreviewPage(site: SiteInfo, page: SitePage) {
+        if (!site.running) {
+            this.toastr.warning(this.translateService.instant('editor.sites-not-running', { name: site.name }));
+            return;
+        }
+        this.dialog.open(SitePreviewDialogComponent, {
+            position: { top: '40px' },
+            maxWidth: '96vw',
+            data: <SitePreviewData>{ site: site.name, page: page.name, liveUrl: this.liveUrl(site, page), fileUrl: this.getFile(site, page)?.url }
+        });
+    }
+
+    private liveUrl(site: SiteInfo, page: SitePage): string {
+        return `${site.url}home?viewName=${encodeURIComponent(page.name)}`;
     }
 
     onAddSite() {

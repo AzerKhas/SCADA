@@ -729,20 +729,49 @@ function jsonBlock(id, value) {
 }
 
 /**
- * navigation bar of the files: back, supervision of the site, the other files, API, editor
- * (hidden when the file is shown in a page of FUXA, frame of the page Configuration)
+ * navigation bar of the files of the site: back, mode exploitation (supervision) / mode édition (editor), pages of the
+ * folder (in the order of the menu, written again at each save: new pages are added), and a list to go to another site
+ * (on the last page seen in that site, kept in the browser for each site)
  */
 function navBar(current) {
     const base = `/site/${encodeURIComponent(siteName)}`;
-    const link = (href, text, active) => `<a href="${href}"${active ? ' class="active"' : ''}>${esc(text)}</a>`;
+    const link = (href, text, active, title) => `<a href="${href}"${active ? ' class="active"' : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(text)}</a>`;
     const pages = navFiles.map(f => link(f.file, f.page, f.file === current)).join('');
-    return `<nav class="sitenav" id="sitenav">
+    return `<nav class="sitenav" id="sitenav" data-site="${esc(siteName)}" data-file="${esc(current)}">
   <a href="${base}/home" class="back" onclick="if (history.length > 1 && document.referrer) { history.back(); return false; }">&#8592; Retour</a>
-  ${link(`${base}/home`, 'Supervision')}
+  ${link(`${base}/home`, '▶ Exploitation', false, 'Mode exploitation : supervision du site (dernière page consultée)')}
   <span class="sep"></span>${pages}${link('diagnostic.html', 'Diagnostic', current === 'diagnostic.html')}${link('versions.html', 'Versions', current === 'versions.html')}${link('api.html', 'API', current === 'api.html')}
-  <span class="sep"></span>${link(`${base}/editor`, 'Éditeur')}
+  <span class="sep"></span>${link(`${base}/editor`, '✎ Édition', false, 'Mode édition : éditeur FUXA du site')}
+  <span style="flex:1"></span>
+  <label class="site-switch" title="Passer à un autre site (sur sa dernière page consultée)">Site <select id="site-switch"><option>${esc(siteName)}</option></select></label>
 </nav>
-<script>if (window.self !== window.top) { document.getElementById('sitenav').style.display = 'none'; }</script>`;
+<script>
+  (function () {
+    var nav = document.getElementById('sitenav');
+    if (window.self !== window.top) { nav.style.display = 'none'; return; }
+    var site = nav.getAttribute('data-site'), file = nav.getAttribute('data-file');
+    var key = function (name) { return 'site-last-file:' + name; };
+    try { localStorage.setItem(key(site), file); } catch (err) { /* private mode */ }
+    var select = document.getElementById('site-switch');
+    fetch('/api/v1/sites').then(function (r) { return r.json(); }).then(function (r) {
+      var sites = r.data || [];
+      select.innerHTML = sites.map(function (s) {
+        var name = String(s.site_id).replace(/[&<>"]/g, '');
+        return '<option value="' + name + '"' + (s.site_id === site ? ' selected' : '') + (s.state === 'running' ? '' : ' disabled') + '>' + name + (s.state === 'running' ? '' : ' (arrêté)') + '</option>';
+      }).join('');
+      select.addEventListener('change', function () {
+        var target = sites.filter(function (s) { return s.site_id === select.value; })[0];
+        if (!target) { return; }
+        var files = (target.files || []).map(function (f) { return f.file; });
+        var last = null;
+        try { last = localStorage.getItem(key(target.site_id)); } catch (err) { /* private mode */ }
+        // the last page seen in the site, else the same page, else its home page
+        var page = last && files.indexOf(last) >= 0 ? last : files.indexOf(file) >= 0 ? file : files.indexOf('accueil.html') >= 0 ? 'accueil.html' : files[0];
+        location.href = '/site/' + encodeURIComponent(target.site_id) + '/fichiers/' + (page || '');
+      });
+    }).catch(function () { select.disabled = true; });
+  })();
+</script>`;
 }
 
 function document(title, body) {
@@ -807,6 +836,7 @@ function document(title, body) {
   .sitenav a { color: #fff; text-decoration: none; padding: 5px 10px; border-radius: 3px; font-size: 14px; }
   .sitenav a:hover { background: rgba(255,255,255,0.15); } .sitenav a.active { background: #1e88e5; }
   .sitenav a.back { font-weight: bold; border: 1px solid rgba(255,255,255,0.5); margin-right: 6px; }
+  .sitenav .site-switch { color: #fff; font-size: 13px; } .sitenav select { margin-left: 4px; padding: 3px; }
   .sitenav .sep { width: 1px; height: 20px; background: rgba(255,255,255,0.35); margin: 0 6px; }
 </style>
 </head>

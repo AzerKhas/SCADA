@@ -13,11 +13,18 @@
             <span class="site-state" [class.site-running]="site.running"
                   matTooltip="{{(site.running ? 'editor.sites-running' : 'editor.sites-stopped') | translate}}"></span>
             <mat-menu #menusite="matMenu" class="leftbar-item-menu">
-                <button mat-menu-item (click)="onOpenPage(site)" [disabled]="site.name === currentSite">{{'editor.sites-open-editor' | translate}}</button>
+                <button mat-menu-item (click)="onOpenPage(site)" [disabled]="site.name === currentSite">
+                    <mat-icon>edit</mat-icon>{{'editor.sites-open-editor' | translate}}
+                </button>
+                <button mat-menu-item (click)="onOpenSupervision(site)" [disabled]="!site.running">
+                    <mat-icon>play_circle</mat-icon>{{'editor.sites-open-supervision' | translate}}
+                </button>
+                <mat-divider></mat-divider>
                 <button mat-menu-item (click)="addPage.emit()" *ngIf="site.name === currentSite">{{'editor.sites-add-page' | translate}}</button>
                 <button mat-menu-item (click)="onConfigureCurves(site)" *ngIf="site.name === currentSite">{{'editor.sites-curves-menu' | translate}}</button>
                 <button mat-menu-item (click)="onConfigureHistory(site)" *ngIf="site.name === currentSite">{{'editor.sites-history-menu' | translate}}</button>
-                <button mat-menu-item (click)="onOpenSupervision(site)">{{'editor.sites-open-supervision' | translate}}</button>
+                <button mat-menu-item (click)="onOpenSiteFile(site, 'diagnostic.html')" [disabled]="!site.running">{{'editor.sites-open-diagnostic' | translate}}</button>
+                <button mat-menu-item (click)="onOpenSiteFile(site, 'versions.html')" [disabled]="!site.running">{{'editor.sites-open-versions' | translate}}</button>
                 <button mat-menu-item (click)="onOpenApi(site)">{{'editor.sites-open-api' | translate}}</button>
                 <button mat-menu-item (click)="onExportSite(site)" [disabled]="site.busy">{{'editor.sites-export' | translate}}</button>
                 <!-- the site open in this editor is managed from the editor of another site or of the main project -->
@@ -35,6 +42,8 @@
                  [class.leftbar-item-active]="isCurrentPage(site, page)" (click)="onOpenPage(site, page)">
                 <mat-icon class="leftbar-item-type item-icon-page">description</mat-icon>
                 <span class="site-name" [matTooltip]="getFile(site, page)?.file">{{page.name}}</span>
+                <mat-icon class="page-file" (click)="onPreviewPage(site, page);$event.stopPropagation()"
+                          matTooltip="{{'editor.sites-preview' | translate}}">visibility</mat-icon>
                 <mat-icon *ngIf="getFile(site, page) as file" class="page-file" (click)="onOpenFile(file);$event.stopPropagation()"
                           matTooltip="{{'editor.sites-open-file' | translate: { file: file.file } }}">open_in_new</mat-icon>
                 <ng-container *ngIf="site.name === currentSite">

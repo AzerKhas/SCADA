@@ -207,6 +207,34 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         });
     }
 
+    /**
+     * custom-SCADA: last page seen, kept for each site (address /site/<name>/home) and for the main project,
+     * in the browser (localStorage of the main address, shared by all the sites)
+     */
+    private lastViewKey(): string {
+        const base = window.location.pathname.replace(/\/home(\/.*)?$/, '').replace(/\/$/, '');
+        return `fuxa-last-view:${base || '/'}`;
+    }
+
+    private saveLastView(viewId: string) {
+        try {
+            // a page shown in a frame (preview of the editor, page of FUXA) is not the page seen by the user
+            if (viewId && window.self === window.top) {
+                localStorage.setItem(this.lastViewKey(), viewId);
+            }
+        } catch (err) {
+            // private mode of the browser
+        }
+    }
+
+    private readLastView(): string {
+        try {
+            return localStorage.getItem(this.lastViewKey());
+        } catch (err) {
+            return null;
+        }
+    }
+
     async onGoToPage(viewId: string, force: boolean = false, options: any = {}) {
         if (viewId === this.viewAsAlarms) {
             this.onAlarmsShowMode('expand');
@@ -218,6 +246,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
             this.changeDetector.detectChanges();
             if (view) {
                 this.homeView = view;
+                this.saveLastView(view.id);
                 this.changeDetector.detectChanges();
                 this.setBackground();
                 if (this.homeView.type !== this.cardViewType && this.homeView.type !== this.mapsViewType) {
@@ -425,11 +454,16 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
                 }
             }
             let startView = this.hmi.views.find(x => x.name === this.route.snapshot.queryParamMap.get('viewName')?.trim());
+            // custom-SCADA: without a page in the address, the last page seen (for each site)
+            const lastView = this.hmi.views.find(x => x.id === this.readLastView());
             if (startView) {
                 viewToShow = startView;
+            } else if (lastView) {
+                viewToShow = lastView;
             }
             viewToShow = await this.projectService.ensureViewLoaded(viewToShow.id);
             this.homeView = viewToShow;
+            this.saveLastView(viewToShow.id);
             this.setBackground();
             // check sidenav
             this.showSidenav = null;

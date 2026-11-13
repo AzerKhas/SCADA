@@ -1,0 +1,34 @@
+.site-preview {
+    position: relative;
+    width: 86vw;
+    max-width: 1500px;
+
+    .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 4px 0 8px;
+
+        .url {
+            flex: 1;
+            font-size: 12px;
+            opacity: 0.7;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+    }
+
+    .frame {
+        padding: 0;
+        max-height: none;
+        height: 72vh;
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: 1px solid #ccc;
+            background: #fff;
+        }
+    }
+}

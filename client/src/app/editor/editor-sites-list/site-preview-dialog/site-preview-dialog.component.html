@@ -1,0 +1,17 @@
+<div class="site-preview">
+    <h1 mat-dialog-title class="dialog-title" mat-dialog-draggable>{{'editor.sites-preview-title' | translate}} : {{data.page}} - {{data.site}}</h1>
+    <mat-icon (click)="onClose()" class="dialog-close-btn">clear</mat-icon>
+    <div class="toolbar">
+        <mat-button-toggle-group [value]="mode" (change)="setMode($event.value)">
+            <mat-button-toggle value="live">{{'editor.sites-preview-live' | translate}}</mat-button-toggle>
+            <mat-button-toggle value="file" [disabled]="!data.fileUrl">{{'editor.sites-preview-file' | translate}}</mat-button-toggle>
+        </mat-button-toggle-group>
+        <span class="url">{{currentUrl()}}</span>
+        <button mat-stroked-button (click)="onOpenTab()">
+            <mat-icon>open_in_new</mat-icon> {{'editor.sites-preview-open' | translate}}
+        </button>
+    </div>
+    <div mat-dialog-content class="frame">
+        <iframe [src]="url" title="{{data.page}}"></iframe>
+    </div>
+</div>
