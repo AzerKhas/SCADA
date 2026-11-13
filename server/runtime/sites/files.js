@@ -406,6 +406,11 @@ function apiHtml() {
         row('GET', `${base}/config`, '', 'connexions, pages, menu, graphiques, source de l\'historique'),
         row('GET', `${base}/config/graphs`, '', 'graphiques de la page Courbes'),
         row('PUT', `${base}/config/graphs`, '{ "graphs": [ { "title", "mode", "xTag", "series": [ { "tag", "unit", "color", "min", "max" } ], ... } ] }', 'graphiques enregistrés'),
+        row('GET', `${base}/config/graph-sets`, '', 'configurations de courbes : id, name, nombre de graphiques, active (par défaut)'),
+        row('POST', `${base}/config/graph-sets`, '{ "name": "...", "copyFrom": "id (facultatif)" }', 'configuration créée (201)'),
+        row('PUT / DELETE', `${base}/config/graph-sets/{set_id}`, '{ "name": "..." } (PUT)', 'configuration renommée / supprimée'),
+        row('POST', `${base}/config/graph-sets/{set_id}/activate`, '', 'configuration affichée par défaut dans la page Courbes'),
+        row('GET / PUT', `${base}/config/graph-sets/{set_id}/graphs`, '{ "graphs": [...] } (PUT)', 'graphiques de la configuration'),
         row('GET', `${base}/config/history`, '', 'source de l\'historique (sans mot de passe)'),
         row('PUT', `${base}/config/history`, '{ "source": "fuxa" | "postgres", ... }', 'source enregistrée'),
         row('POST', `${base}/config/history/test`, 'paramètres PostgreSQL', 'tables et colonnes')
@@ -424,7 +429,7 @@ function apiHtml() {
   <h2>Historiques et courbes</h2>
   ${table(['Méthode', 'Adresse', 'Paramètres / corps', 'Réponse (data)'], [
         row('GET', `${base}/history`, 'tags=nom1,nom2 (tags des graphiques si absent)\nfrom, to : ms ou date ISO (8 dernières heures si absent, 1 an au plus)\ninterval : une valeur moyenne toutes les n secondes\nmaxPoints : 10 à 200000 (2000 par défaut)', 'séries : tag, count, values [{ t : ms, v : valeur }]'),
-        row('GET', `${base}/curves`, '', 'graphiques'),
+        row('GET', `${base}/curves`, 'set : configuration (par défaut si absent)', 'graphiques'),
         row('GET', `${base}/curves/{graph_id}/data`, 'from, to (période du graphique si absent), interval', 'mode temps : values [{ t, v }] ; mode XY : points [{ x, y, t }]')
     ])}
 </section>
@@ -546,7 +551,11 @@ function curvesSection(project) {
     const lines = ((chart && chart.lines) || []).map(line => ({ id: line.id, name: line.name, label: line.label, color: line.color }));
     let list = [];
     try {
-        list = require('./graphs').get(siteSettings, allTags, lines);
+        // graphs of all the configurations of graphs
+        const graphs = require('./graphs');
+        graphs.listSets(siteSettings, allTags, lines).forEach(set => {
+            graphs.get(siteSettings, allTags, lines, set.id).forEach(g => list.push(Object.assign({ setName: set.name + (set.active ? ' (par défaut)' : '') }, g)));
+        });
     } catch (err) {
         logger.error(`site files: graphs ${err}`);
     }
@@ -557,7 +566,8 @@ function curvesSection(project) {
     const limits = (min, max) => min === null && max === null ? 'auto' : `${min === null ? 'auto' : min} à ${max === null ? 'auto' : max}`;
     return `<section id="graphes">
   <h2>Graphiques de la page Courbes</h2>
-  ${table(['Graphique', 'Mode', 'Tags (libellé, unité, limites Y)', 'Période', 'Échantillonnage', 'Options'], list.map(g => [
+  ${table(['Configuration', 'Graphique', 'Mode', 'Tags (libellé, unité, limites Y)', 'Période', 'Échantillonnage', 'Options'], list.map(g => [
+        g.setName,
         g.title,
         g.mode === 'xy' ? `XY : en fonction de ${tagText(g.xTag)}${g.xUnit ? ` (${g.xUnit})` : ''}, X : ${limits(g.xMin, g.xMax)}` : 'temps',
         g.series.map(x => `${tagText(x.tag)} : ${x.label || ''}${x.unit ? ` (${x.unit})` : ''}, ${limits(x.min, x.max)}`).join('\n'),
@@ -712,6 +722,10 @@ function document(title, body) {
   pre.diff { max-height: 520px; padding: 0; } pre.diff span { display: block; padding: 0 8px; white-space: pre-wrap; word-break: break-all; }
   pre.diff i { display: inline-block; min-width: 70px; color: #90a4ae; font-style: normal; }
   .d-add { background: #e8f5e9; color: #1b5e20; } .d-del { background: #ffebee; color: #b71c1c; } .d-skip { color: #90a4ae; font-style: italic; background: #f5f5f5; }
+  .sets-bar { background: #e8eef7; border-radius: 6px; padding: 6px 10px; }
+  .picker-back { position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 50; display: flex; align-items: center; justify-content: center; }
+  .picker { background: #fff; border-radius: 8px; padding: 12px 16px; width: min(1000px, 94vw); max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }
+  .picker-list { overflow: auto; flex: 1; min-height: 120px; border: 1px solid #ddd; }
   .pan-labels { display: flex; justify-content: space-between; font-size: 12px; color: #607d8b; }
   .sitenav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: -20px -20px 18px -20px; padding: 8px 20px; background: #1f3864; position: sticky; top: 0; z-index: 10; }
   .sitenav a { color: #fff; text-decoration: none; padding: 5px 10px; border-radius: 3px; font-size: 14px; }

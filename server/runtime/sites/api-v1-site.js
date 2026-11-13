@@ -15,7 +15,9 @@
  * GET  /tags/:tag                one tag with its current value
  * GET  /values?tags=a,b          current values (all the tags if no tags)
  * GET  /history?tags=a,b&from=&to=&interval=&maxPoints=
- * GET  /curves                   graphs of the page Courbes
+ * GET  /config/graph-sets        configurations of graphs (POST create, PUT /:id rename, DELETE /:id, POST /:id/activate,
+ *                                GET / PUT /:id/graphs)
+ * GET  /curves?set=              graphs of the page Courbes (active configuration, or set)
  * GET  /curves/:graph_id/data    data of a graph for a period (mode temps: values, mode XY: points x / y)
  * GET  /alarms                   active alarms (filters: type, tag, text)
  * GET  /alarms/history?from=&to= history of the alarms
@@ -104,6 +106,49 @@ function router(runtime, settings, siteId) {
             throw badRequest('Champ graphs attendu : liste des graphiques.', { field: 'graphs' });
         }
         send(res, await api.saveGraphs(runtime, settings, input.graphs), meta());
+    }));
+
+    // configurations of graphs (several sets of graphs for the site, one of them active)
+    app.get('/config/graph-sets', h(async (req, res) => {
+        const result = await api.graphSets(runtime, settings, 'list');
+        send(res, result.sets, meta({ count: result.sets.length }));
+    }));
+
+    app.post('/config/graph-sets', h(async (req, res) => {
+        const input = body(req);
+        if (typeof input.name !== 'string' || !input.name.trim()) {
+            throw badRequest('Champ name manquant : nom de la configuration.', { field: 'name' });
+        }
+        const result = await api.graphSets(runtime, settings, 'create', { name: input.name, copyFrom: input.copyFrom });
+        send(res, result.set, meta({ sets: result.sets }), 201);
+    }));
+
+    app.put('/config/graph-sets/:set_id', h(async (req, res) => {
+        const input = body(req);
+        const result = await api.graphSets(runtime, settings, 'rename', { setId: req.params.set_id, name: input.name });
+        send(res, result.set, meta({ sets: result.sets }));
+    }));
+
+    app.delete('/config/graph-sets/:set_id', h(async (req, res) => {
+        const result = await api.graphSets(runtime, settings, 'delete', { setId: req.params.set_id });
+        send(res, { set_id: req.params.set_id, deleted: true }, meta({ sets: result.sets }));
+    }));
+
+    app.post('/config/graph-sets/:set_id/activate', h(async (req, res) => {
+        const result = await api.graphSets(runtime, settings, 'activate', { setId: req.params.set_id });
+        send(res, result.sets, meta());
+    }));
+
+    app.get('/config/graph-sets/:set_id/graphs', h(async (req, res) => {
+        send(res, api.siteGraphs(await project(), settings, req.params.set_id), meta({ set_id: req.params.set_id }));
+    }));
+
+    app.put('/config/graph-sets/:set_id/graphs', h(async (req, res) => {
+        const input = body(req);
+        if (!Array.isArray(input.graphs)) {
+            throw badRequest('Champ graphs attendu : liste des graphiques.', { field: 'graphs' });
+        }
+        send(res, await api.saveGraphs(runtime, settings, input.graphs, req.params.set_id), meta({ set_id: req.params.set_id }));
     }));
 
     app.get('/config/history', h((req, res) => {
@@ -207,7 +252,8 @@ function router(runtime, settings, siteId) {
     }));
 
     app.get('/curves', h(async (req, res) => {
-        send(res, api.siteGraphs(await project(), settings), meta());
+        const set = req.query.set ? String(req.query.set) : undefined;
+        send(res, api.siteGraphs(await project(), settings, set), meta({ set_id: set || null }));
     }));
 
     /**
@@ -217,7 +263,7 @@ function router(runtime, settings, siteId) {
      */
     app.get('/curves/:graph_id/data', h(async (req, res) => {
         const prj = await project();
-        const graph = api.siteGraphs(prj, settings).find(g => g.id === req.params.graph_id);
+        const graph = api.siteGraphs(prj, settings, req.query.set ? String(req.query.set) : undefined).find(g => g.id === req.params.graph_id);
         if (!graph) {
             throw notFound('graph_not_found', `Graphique inconnu dans le site ${siteId} : ${req.params.graph_id}`);
         }

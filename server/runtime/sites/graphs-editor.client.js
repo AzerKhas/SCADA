@@ -55,17 +55,27 @@
         'ajouter plusieurs tags dans un même graphique pour les comparer. Les tags avec la même unité partagent un axe Y, ' +
         'les autres ont chacun leur axe Y (échelles indépendantes). Min / Max vides : échelle automatique. ' +
         'Chaque changement est enregistré automatiquement ; les tags choisis sont enregistrés (historique) à partir de ce moment.</p>' +
+        '<div class="period sets-bar">' +
+        '  <b>Configuration de courbes :</b> <select id="set-select"></select>' +
+        '  <button data-a="set-new" title="Nouvelle configuration vide">Nouvelle</button>' +
+        '  <button data-a="set-copy" title="Copie de cette configuration">Dupliquer</button>' +
+        '  <button data-a="set-rename">Renommer</button>' +
+        '  <button data-a="set-delete">Supprimer</button>' +
+        '  <button data-a="set-activate" title="Configuration affichée à l’ouverture de la page Courbes">Afficher par défaut</button>' +
+        '  <span id="set-info" class="status"></span>' +
+        '</div>' +
         '<div class="period">' +
         '  <button data-a="add" class="primary">+ Nouveau graphique</button>' +
-        '  <select data-a="add-tag-select"><option value="">Un graphique pour le tag...</option></select>' +
-        '  <button data-a="add-tag">Créer</button>' +
+        '  <button data-a="add-tags" title="Choisir des tags dans la liste des variables du site">+ Graphiques depuis des tags...</button>' +
         '  <span style="flex:1"></span>' +
         '  <a href="courbes.html">Voir la page Courbes</a>' +
         '  <span id="graphs-status" class="status"></span>' +
         '</div>' +
-        '<div id="graphs-list"><p class="empty">Chargement...</p></div>';
+        '<div id="graphs-list"><p class="empty">Chargement...</p></div>' +
+        '<div id="tag-picker" class="picker-back" style="display:none"></div>';
     var list = document.getElementById('graphs-list');
     var statusEl = document.getElementById('graphs-status');
+    var sets = [], currentSet = null;
 
     function status(text, error) {
         statusEl.textContent = text;
@@ -141,7 +151,7 @@
                         '<td><button data-g="' + gi + '" data-s="' + si + '" data-a="remove-series" title="Retirer ce tag">&#10005;</button></td></tr>';
                 }).join('') +
                 '</tbody></table></div>' +
-                '<div class="period"><select data-g="' + gi + '" data-f="new-series">' + tagOptions('', '+ Ajouter un tag à ce graphique...') + '</select></div>' +
+                '<div class="period"><button data-g="' + gi + '" data-a="add-series">+ Ajouter des tags à ce graphique...</button></div>' +
                 '</div>';
         }).join('');
     }
@@ -176,8 +186,8 @@
         }
         saving = true;
         status('Enregistrement...');
-        SiteApi.saveGraphs(graphs).then(function (result) {
-            status('Enregistré : ' + result.graphs.length + ' graphique(s) dans la page Courbes.');
+        SiteApi.saveGraphs(graphs, currentSet).then(function (result) {
+            status('Enregistré : ' + result.graphs.length + ' graphique(s) dans la configuration « ' + setName(currentSet) + ' ».');
         }).catch(function (err) {
             status('Non enregistré : ' + err.message, true);
         }).then(function () {
@@ -272,13 +282,42 @@
         var action = btn.getAttribute('data-a');
         var gi = Number(btn.getAttribute('data-g'));
         var g = graphs[gi];
+        if (action.indexOf('set-') === 0) {
+            setAction(action);
+            return;
+        }
+        if (action === 'add-tags') {
+            // new graphs from tags chosen in the list: one graph per tag, or one graph with all the tags
+            openPicker({
+                title: 'Créer des graphiques depuis des tags', exclude: [], grouping: true,
+                done: function (ids, together) {
+                    if (together) {
+                        var ng = newGraph(null);
+                        ng.title = ids.map(tagName).join(', ').slice(0, 100);
+                        ids.forEach(function (id) { ng.series.push(newSeries(id, ng)); });
+                        graphs.push(ng);
+                    } else {
+                        ids.forEach(function (id) { graphs.push(newGraph(id)); });
+                    }
+                    render();
+                    schedule();
+                }
+            });
+            return;
+        }
+        if (action === 'add-series') {
+            openPicker({
+                title: 'Ajouter des tags au graphique « ' + g.title + ' »', exclude: g.series.map(function (s) { return s.tag; }),
+                done: function (ids) {
+                    ids.forEach(function (id) { g.series.push(newSeries(id, g)); });
+                    render();
+                    schedule();
+                }
+            });
+            return;
+        }
         if (action === 'add') {
             graphs.push(newGraph(null));
-        } else if (action === 'add-tag') {
-            var select = root.querySelector('[data-a="add-tag-select"]');
-            if (!select.value) { status('Choisir un tag.', true); return; }
-            graphs.push(newGraph(select.value));
-            select.value = '';
         } else if (action === 'up' || action === 'down') {
             var to = action === 'up' ? gi - 1 : gi + 1;
             graphs.splice(to, 0, graphs.splice(gi, 1)[0]);
@@ -314,16 +353,160 @@
         schedule();
     });
 
-    // ---------------------------------------------------------------- start
-    Promise.all([SiteApi.info(), SiteApi.graphs()]).then(function (results) {
-        tags = results[0].tags;
-        graphs = results[1].graphs.map(function (g) {
-            delete g.xName;
-            g.series.forEach(function (s) { delete s.name; });
-            return g;
+    // ---------------------------------------------------------------- tag picker
+    var CATEGORIES = { S7: 'Siemens S7', SiemensS7: 'Siemens S7', OPCUA: 'OPC UA', FuxaServer: 'Interne FUXA', ModbusRTU: 'Modbus RTU', ModbusTCP: 'Modbus TCP',
+        BACnet: 'BACnet', WebAPI: 'Web API', MQTTclient: 'MQTT', EthernetIP: 'Ethernet/IP', ODBC: 'ODBC', ADSclient: 'ADS', GPIO: 'GPIO', WebCam: 'Webcam' };
+    function categoryName(c) {
+        return CATEGORIES[c] || c || 'autre';
+    }
+
+    /**
+     * list of the variables of the site with search and filters (name, equipment, category, type, recorded),
+     * several tags can be chosen; options: { title, exclude: [ids], grouping (choice one graph / one per tag), done(ids, together) }
+     */
+    function openPicker(options) {
+        var box = document.getElementById('tag-picker');
+        var uniq = function (values) { return values.filter(function (v, i) { return v && values.indexOf(v) === i; }).sort(); };
+        var devices = uniq(tags.map(function (t) { return t.device; }));
+        var categories = uniq(tags.map(function (t) { return t.category; }));
+        var types = uniq(tags.map(function (t) { return t.type; }));
+        var chosen = {};
+        box.innerHTML = '<div class="picker">' +
+            '<div class="graph-head"><h3>' + esc(options.title) + '</h3><span style="flex:1"></span><button data-p="close">&#10005;</button></div>' +
+            '<div class="period">' +
+            '  <input data-p="search" size="26" placeholder="Rechercher (nom, adresse, description)">' +
+            '  <select data-p="device"><option value="">Tous les équipements</option>' + devices.map(function (d) { return '<option>' + esc(d) + '</option>'; }).join('') + '</select>' +
+            '  <select data-p="category"><option value="">Toutes les catégories</option>' + categories.map(function (c) { return '<option value="' + esc(c) + '">' + esc(categoryName(c)) + '</option>'; }).join('') + '</select>' +
+            '  <select data-p="type"><option value="">Tous les types</option>' + types.map(function (t) { return '<option>' + esc(t) + '</option>'; }).join('') + '</select>' +
+            '  <label><input type="checkbox" data-p="recorded"> Enregistrés seulement</label>' +
+            '</div>' +
+            '<div class="picker-list"><table><thead><tr><th><input type="checkbox" data-p="all" title="Tout cocher"></th><th>Tag</th><th>Équipement</th><th>Catégorie</th><th>Type</th><th>Adresse</th><th>Description</th></tr></thead>' +
+            '<tbody data-p="rows"></tbody></table></div>' +
+            '<div class="period">' +
+            (options.grouping ? '<label><input type="radio" name="grouping" value="each" checked> Un graphique par tag</label>' +
+                '<label><input type="radio" name="grouping" value="together"> Un seul graphique avec tous les tags (comparaison)</label>' : '') +
+            '  <span style="flex:1"></span><span data-p="count" class="status"></span>' +
+            '  <button data-p="ok" class="primary">Ajouter</button><button data-p="close">Annuler</button>' +
+            '</div></div>';
+        box.style.display = '';
+        var q = function (p) { return box.querySelector('[data-p="' + p + '"]'); };
+        var visible = [];
+        function draw() {
+            var text = q('search').value.trim().toLowerCase(), device = q('device').value, category = q('category').value, type = q('type').value;
+            var recorded = q('recorded').checked;
+            visible = tags.filter(function (t) {
+                return options.exclude.indexOf(t.id) < 0 && (!device || t.device === device) && (!category || t.category === category) &&
+                    (!type || t.type === type) && (!recorded || t.recorded) &&
+                    (!text || (t.name + ' ' + t.address + ' ' + (t.description || '') + ' ' + t.device).toLowerCase().indexOf(text) >= 0);
+            });
+            q('rows').innerHTML = visible.map(function (t) {
+                return '<tr><td><input type="checkbox" data-id="' + esc(t.id) + '"' + (chosen[t.id] ? ' checked' : '') + '></td><td>' + esc(t.name) + (t.recorded ? ' &#128339;' : '') + '</td>' +
+                    '<td>' + esc(t.device) + '</td><td>' + esc(categoryName(t.category)) + '</td><td>' + esc(t.type) + '</td><td>' + esc(t.address) + '</td><td>' + esc(t.description || '') + '</td></tr>';
+            }).join('') || '<tr><td colspan="7" class="empty">Aucun tag ne correspond.</td></tr>';
+            q('all').checked = visible.length > 0 && visible.every(function (t) { return chosen[t.id]; });
+            count();
+        }
+        function count() {
+            var n = Object.keys(chosen).filter(function (k) { return chosen[k]; }).length;
+            q('count').textContent = n + ' tag(s) choisi(s), ' + visible.length + ' affiché(s)';
+            q('ok').disabled = !n;
+        }
+        ['search'].forEach(function (p) { q(p).addEventListener('input', draw); });
+        ['device', 'category', 'type', 'recorded'].forEach(function (p) { q(p).addEventListener('change', draw); });
+        q('all').addEventListener('change', function () {
+            visible.forEach(function (t) { chosen[t.id] = q('all').checked; });
+            draw();
         });
-        root.querySelector('[data-a="add-tag-select"]').innerHTML = tagOptions('', 'Un graphique pour le tag...');
-        render();
-        status(graphs.length + ' graphique(s)');
+        q('rows').addEventListener('change', function (e) {
+            var id = e.target.getAttribute('data-id');
+            if (id) { chosen[id] = e.target.checked; count(); }
+        });
+        box.querySelectorAll('[data-p="close"]').forEach(function (b) { b.addEventListener('click', function () { box.style.display = 'none'; }); });
+        q('ok').addEventListener('click', function () {
+            // order of the list of the variables
+            var ids = tags.filter(function (t) { return chosen[t.id]; }).map(function (t) { return t.id; });
+            var together = options.grouping && box.querySelector('input[name="grouping"]:checked').value === 'together';
+            box.style.display = 'none';
+            options.done(ids, together);
+        });
+        draw();
+        q('search').focus();
+    }
+
+    // ---------------------------------------------------------------- configurations of graphs
+    function setName(id) {
+        var s = sets.filter(function (x) { return x.id === id; })[0];
+        return s ? s.name : '';
+    }
+
+    function drawSets() {
+        document.getElementById('set-select').innerHTML = sets.map(function (s) {
+            return '<option value="' + esc(s.id) + '"' + (s.id === currentSet ? ' selected' : '') + '>' + esc(s.name) + ' (' + s.graphs + ' graphique(s))' + (s.active ? ' ★ par défaut' : '') + '</option>';
+        }).join('');
+        var active = sets.filter(function (s) { return s.active; })[0];
+        document.getElementById('set-info').textContent = sets.length + ' configuration(s). Page Courbes par défaut : « ' + (active ? active.name : '') + ' »';
+        root.querySelector('[data-a="set-delete"]').disabled = sets.length < 2;
+        root.querySelector('[data-a="set-activate"]').disabled = !!(active && active.id === currentSet);
+    }
+
+    function loadSet(id) {
+        currentSet = id;
+        return SiteApi.graphs(id).then(function (r) {
+            graphs = r.graphs.map(function (g) {
+                delete g.xName;
+                g.series.forEach(function (s) { delete s.name; });
+                return g;
+            });
+            drawSets();
+            render();
+            status(graphs.length + ' graphique(s) dans « ' + setName(id) + ' »');
+        });
+    }
+
+    function reloadSets(selectId) {
+        return SiteApi.graphSets().then(function (list) {
+            sets = list;
+            var id = selectId && sets.some(function (s) { return s.id === selectId; }) ? selectId : (sets.filter(function (s) { return s.active; })[0] || sets[0]).id;
+            return loadSet(id);
+        });
+    }
+
+    /** changes not yet saved are saved before changing of configuration */
+    function flush() {
+        if (timer) { clearTimeout(timer); save(); }
+    }
+
+    function setAction(action) {
+        flush();
+        var p;
+        if (action === 'set-new' || action === 'set-copy') {
+            var name = prompt(action === 'set-new' ? 'Nom de la nouvelle configuration :' : 'Nom de la copie de « ' + setName(currentSet) + ' » :',
+                action === 'set-copy' ? setName(currentSet) + ' (copie)' : '');
+            if (!name) { return; }
+            p = SiteApi.request('POST', '/config/graph-sets', { name: name, copyFrom: action === 'set-copy' ? currentSet : undefined }).then(function (r) { return reloadSets(r.data.id); });
+        } else if (action === 'set-rename') {
+            var newName = prompt('Nouveau nom de la configuration :', setName(currentSet));
+            if (!newName) { return; }
+            p = SiteApi.request('PUT', '/config/graph-sets/' + encodeURIComponent(currentSet), { name: newName }).then(function () { return reloadSets(currentSet); });
+        } else if (action === 'set-delete') {
+            if (!confirm('Supprimer la configuration « ' + setName(currentSet) + ' » et ses graphiques ?')) { return; }
+            p = SiteApi.request('DELETE', '/config/graph-sets/' + encodeURIComponent(currentSet)).then(function () { return reloadSets(); });
+        } else if (action === 'set-activate') {
+            p = SiteApi.request('POST', '/config/graph-sets/' + encodeURIComponent(currentSet) + '/activate').then(function () { return reloadSets(currentSet); });
+        }
+        if (p) {
+            p.catch(function (err) { status(err.message, true); });
+        }
+    }
+
+    document.getElementById('set-select').addEventListener('change', function (e) {
+        flush();
+        loadSet(e.target.value).catch(function (err) { status(err.message, true); });
+    });
+
+    // ---------------------------------------------------------------- start
+    SiteApi.info().then(function (info) {
+        tags = info.tags;
+        return reloadSets();
     }).catch(function (err) { status(err.message, true); });
 })();

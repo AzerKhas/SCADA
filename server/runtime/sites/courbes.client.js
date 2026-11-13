@@ -41,6 +41,14 @@
 
     // ---------------------------------------------------------------- page
     app.innerHTML =
+        '<div class="period sets-bar">' +
+        '  <label><b>Configuration :</b> <select id="set-select"></select></label>' +
+        '  <button id="refresh" title="Recharger les valeurs ; les graphiques qui finissent maintenant avancent jusqu’à maintenant">&#10227; Actualiser</button>' +
+        '  <label>Actualisation automatique <select id="auto-refresh">' +
+        '    <option value="0">non</option><option value="10">toutes les 10 s</option><option value="30">toutes les 30 s</option>' +
+        '    <option value="60">toutes les minutes</option><option value="300">toutes les 5 min</option></select></label>' +
+        '  <span id="refresh-status" class="status"></span>' +
+        '</div>' +
         '<div class="period">' +
         '  <b>Tous les graphiques :</b>' +
         '  <label>Du <input type="datetime-local" id="all-from"></label>' +
@@ -362,22 +370,84 @@
         resizeTimer = setTimeout(function () { cards.forEach(draw); }, 150);
     });
 
+    // ---------------------------------------------------------------- refresh
+    /**
+     * load the values again; the graphs showing the last values (period ending now) slide until now with the same length,
+     * auto: the zoomed graphs and the graphs on a period of the past are not changed
+     */
+    function refresh(auto) {
+        var now = Date.now();
+        cards.forEach(function (g) {
+            if (!g.data) { return; }
+            var width = g.to - g.from;
+            var live = now - g.to < Math.max(2 * 60000, width * 0.05) + (autoSeconds * 1000);
+            if (auto && (g.zooms.length || !live)) { return; }
+            if (live) {
+                if (g.home.to >= g.to - 1000) { g.home = { from: now - (g.home.to - g.home.from), to: now }; }
+                load(g, now - width, now);
+            } else {
+                load(g, g.from, g.to);
+            }
+        });
+        status(document.getElementById('refresh-status'), 'Actualisé à ' + SiteApi.formatDate(now, true).slice(11));
+    }
+
+    var autoSeconds = 0, autoTimer = null;
+    var store = {
+        get: function (k) { try { return localStorage.getItem('courbes-' + siteName + '-' + k); } catch (err) { return null; } },
+        set: function (k, v) { try { localStorage.setItem('courbes-' + siteName + '-' + k, v); } catch (err) { /* private mode */ } }
+    };
+    function setAuto(seconds) {
+        autoSeconds = seconds;
+        clearInterval(autoTimer);
+        autoTimer = seconds ? setInterval(function () { if (!document.hidden) { refresh(true); } }, seconds * 1000) : null;
+        store.set('auto', String(seconds));
+    }
+    document.getElementById('refresh').addEventListener('click', function () { refresh(false); });
+    document.getElementById('auto-refresh').addEventListener('change', function (e) { setAuto(Number(e.target.value)); });
+
+    // ---------------------------------------------------------------- configurations of graphs
+    /** graphs of a configuration: the cards are made again */
+    function showSet(setId) {
+        store.set('set', setId);
+        status(allStatus, 'Chargement...');
+        return SiteApi.graphs(setId).then(function (result) {
+            var list = result.graphs || [];
+            var box = document.getElementById('graphs');
+            box.innerHTML = '';
+            cards = [];
+            if (!list.length) {
+                status(allStatus, 'Aucun graphique dans cette configuration : les graphiques se configurent dans la page Configuration (section Graphiques de la page Courbes).', true);
+                return;
+            }
+            status(allStatus, list.length + ' graphique(s)');
+            cards = list.map(function (cfg, i) {
+                var g = createCard(cfg, i);
+                box.appendChild(g.el);
+                return g;
+            });
+            cards.forEach(function (g) { load(g, g.from, g.to); });
+        });
+    }
+
+    document.getElementById('set-select').addEventListener('change', function (e) {
+        showSet(e.target.value).catch(function (err) { status(allStatus, err.message, true); });
+    });
+
     var now = Date.now();
     allFrom.value = SiteApi.inputValue(now - 8 * HOUR);
     allTo.value = SiteApi.inputValue(now);
-    SiteApi.graphs().then(function (result) {
-        var list = result.graphs || [];
-        if (!list.length) {
-            status(allStatus, 'Aucun graphique : les graphiques se configurent dans la page Configuration (section Graphiques de la page Courbes).', true);
-            return;
-        }
-        status(allStatus, list.length + ' graphique(s)');
-        var box = document.getElementById('graphs');
-        cards = list.map(function (cfg, i) {
-            var g = createCard(cfg, i);
-            box.appendChild(g.el);
-            return g;
-        });
-        cards.forEach(function (g) { load(g, g.from, g.to); });
+    var savedAuto = Number(store.get('auto')) || 0;
+    document.getElementById('auto-refresh').value = String(savedAuto);
+    if (document.getElementById('auto-refresh').value !== String(savedAuto)) { savedAuto = 0; }
+    setAuto(savedAuto);
+    SiteApi.graphSets().then(function (sets) {
+        // configuration: ?config=<id> in the address, else the last one shown, else the default one
+        var wanted = new URLSearchParams(location.search).get('config') || store.get('set');
+        var chosen = sets.filter(function (s) { return s.id === wanted; })[0] || sets.filter(function (s) { return s.active; })[0] || sets[0];
+        document.getElementById('set-select').innerHTML = sets.map(function (s) {
+            return '<option value="' + esc(s.id) + '"' + (s.id === chosen.id ? ' selected' : '') + '>' + esc(s.name) + (s.active ? ' (par défaut)' : '') + '</option>';
+        }).join('');
+        return showSet(chosen.id);
     }).catch(function (err) { status(allStatus, err.message, true); });
 })();

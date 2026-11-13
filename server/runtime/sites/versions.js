@@ -298,7 +298,22 @@ function compare(a, b) {
     changes.push(...compareItems('Notifications', pa.notifications, pb.notifications, x => x.id, x => x.name));
     changes.push(...compareItems('Textes', pa.texts, pb.texts, x => x.id || x.name, x => x.name));
     const ca = (a && a.config) || {}, cb = (b && b.config) || {};
-    const graphs = c => (c['courbes-graphes.json'] && c['courbes-graphes.json'].graphs) || [];
+    // graphs of the page Courbes: several configurations (sets), or one list (first version of the file)
+    const store = c => c['courbes-graphes.json'] || {};
+    const sets = c => (Array.isArray(store(c).sets) ? store(c).sets : []).map(s => ({ id: s.id, name: s.name }));
+    const graphs = c => {
+        const value = store(c);
+        if (!Array.isArray(value.sets)) {
+            return value.graphs || [];
+        }
+        const result = [];
+        value.sets.forEach(s => (s.graphs || []).forEach(g => result.push(Object.assign({}, g, { id: `${s.id}/${g.id}`, title: `${s.name} : ${g.title}` }))));
+        return result;
+    };
+    changes.push(...compareItems('Configurations de courbes', sets(ca), sets(cb), s => s.id, s => s.name, (x, y) => `nom : ${x.name} → ${y.name}`));
+    if (store(ca).active && store(cb).active && store(ca).active !== store(cb).active) {
+        changes.push({ category: 'Configurations de courbes', action: 'modifié', name: 'configuration par défaut' });
+    }
     changes.push(...compareItems('Graphiques de la page Courbes', graphs(ca), graphs(cb), g => g.id, g => g.title));
     if (!same(ca['history-db.json'], cb['history-db.json'])) {
         changes.push({ category: 'Source de l\'historique', action: 'modifié', name: 'base de données', details: changedKeys(ca['history-db.json'], cb['history-db.json']).join(', ') });

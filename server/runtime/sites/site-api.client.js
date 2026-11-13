@@ -111,13 +111,20 @@
         });
     }
 
-    /** graphs of the page Courbes */
-    function graphs() {
-        return get('/config/graphs').then(function (r) { return { site: r.meta.site_id, graphs: r.data }; });
+    /** graphs of the page Courbes: active configuration, or setId */
+    function graphs(setId) {
+        var path = setId ? '/config/graph-sets/' + encodeURIComponent(setId) + '/graphs' : '/config/graphs';
+        return get(path).then(function (r) { return { site: r.meta.site_id, graphs: r.data }; });
     }
 
-    function saveGraphs(list) {
-        return request('PUT', '/config/graphs', { graphs: list }).then(function (r) { return { site: r.meta.site_id, graphs: r.data }; });
+    function saveGraphs(list, setId) {
+        var path = setId ? '/config/graph-sets/' + encodeURIComponent(setId) + '/graphs' : '/config/graphs';
+        return request('PUT', path, { graphs: list }).then(function (r) { return { site: r.meta.site_id, graphs: r.data }; });
+    }
+
+    /** configurations of graphs: [{ id, name, graphs, active }] */
+    function graphSets() {
+        return get('/config/graph-sets').then(function (r) { return r.data; });
     }
 
     /** old choice of the curves (one chart) */
@@ -870,6 +877,7 @@
         saveCurves: saveCurves,
         graphs: graphs,
         saveGraphs: saveGraphs,
+        graphSets: graphSets,
         numbers: numbers,
         plot: plot,
         enableTooltip: enableTooltip,

@@ -202,15 +202,27 @@ function router(runtime, settings, siteName) {
  * (historiques.html, supervision) and are recorded (history)
  * @returns the saved graphs, with the names of the tags
  */
-async function saveGraphs(runtime, settings, list) {
+async function saveGraphs(runtime, settings, list, setId) {
+    const project = await runtime.project.getProject(null, -1);
+    graphs.set(settings, list, allTags(project), chartLines(project), setId);
+    await syncCurves(runtime, settings);
+    const saved = await runtime.project.getProject(null, -1);
+    return siteGraphs(saved, settings, setId);
+}
+
+/**
+ * the tags of all the configurations of graphs become the curves of the chart of the page Courbes
+ * (historiques.html, supervision) and are recorded (history)
+ */
+async function syncCurves(runtime, settings) {
     const project = await runtime.project.getProject(null, -1);
     const all = allTags(project);
-    const result = graphs.set(settings, list, all);
-    const ids = graphs.usedTags(result);
+    const every = graphs.all(settings, all, chartLines(project));
+    const ids = graphs.usedTags(every);
     const lines = ids.map((id, index) => {
         const tag = all.find(t => t.id === id);
         let first = null;
-        result.forEach(g => { first = first || g.series.find(x => x.tag === id); });
+        every.forEach(g => { first = first || g.series.find(x => x.tag === id); });
         return {
             device: tag.deviceName, id: tag.id, name: tag.name,
             label: (first && first.label) || tag.name,
@@ -221,8 +233,34 @@ async function saveGraphs(runtime, settings, list) {
     });
     await saveChart(runtime, project, lines);
     await record(runtime, project, ids);
-    const saved = await runtime.project.getProject(null, -1);
-    return siteGraphs(saved, settings);
+}
+
+/** lines of the chart of the page Courbes, for graphs.js */
+function chartLines(project) {
+    return curves(project).map(c => ({ id: c.tagId, name: c.name, label: c.label, color: c.color }));
+}
+
+/** configurations of graphs: list, create, rename, delete, activate (graphs.js) */
+async function graphSets(runtime, settings, action, args) {
+    const project = await runtime.project.getProject(null, -1);
+    const all = allTags(project), lines = chartLines(project);
+    args = args || {};
+    let result = null;
+    if (action === 'create') {
+        result = graphs.createSet(settings, all, lines, args.name, args.copyFrom);
+    } else if (action === 'rename') {
+        result = graphs.renameSet(settings, all, lines, args.setId, args.name);
+    } else if (action === 'delete') {
+        graphs.deleteSet(settings, all, lines, args.setId);
+        await syncCurves(runtime, settings);
+    } else if (action === 'activate') {
+        graphs.activateSet(settings, all, lines, args.setId);
+    }
+    if (action !== 'list') {
+        // the configurations are in the versions of the site: the files are written again (new version)
+        require('./files').refresh();
+    }
+    return { set: result ? { id: result.id, name: result.name } : null, sets: graphs.listSets(settings, all, lines) };
 }
 
 /** lines of the chart of the page Courbes */
@@ -252,12 +290,12 @@ async function record(runtime, project, ids) {
 }
 
 /** graphs of the page Courbes, with the names of the tags */
-function siteGraphs(project, settings) {
+function siteGraphs(project, settings, setId) {
     const all = allTags(project);
-    const lines = curves(project).map(c => ({ id: c.tagId, name: c.name, label: c.label, color: c.color }));
+    const lines = chartLines(project);
     const names = {};
     all.forEach(t => { names[t.id] = t.name; });
-    return graphs.get(settings, all, lines).map(g => Object.assign(g, {
+    return graphs.get(settings, all, lines, setId).map(g => Object.assign(g, {
         xName: g.xTag ? names[g.xTag] : null,
         series: g.series.map(s => Object.assign(s, { name: names[s.tag] }))
     }));
@@ -404,6 +442,7 @@ module.exports = {
     curves: curves,
     siteGraphs: siteGraphs,
     saveGraphs: saveGraphs,
+    graphSets: graphSets,
     sample: sample,
     reduce: reduce,
     MAX_TAGS: MAX_TAGS,
