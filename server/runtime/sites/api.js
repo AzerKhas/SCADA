@@ -30,7 +30,7 @@ const MAX_POINTS = 200000;
 
 function router(runtime, settings, siteName) {
     const app = express.Router();
-    const source = history.create(runtime, settings);
+    const source = historySource(runtime, settings);
     const authJwt = require('../../api/jwt-helper');
     // with the security enabled, a valid token is needed (header x-access-token)
     app.use((req, res, next) => settings.secureEnabled ? authJwt.requireAuth(req, res, next) : next());
@@ -188,32 +188,41 @@ function router(runtime, settings, siteName) {
      */
     app.put('/graphs', express.json({ limit: '500kb' }), async (req, res) => {
         try {
-            const project = await runtime.project.getProject(null, -1);
-            const all = allTags(project);
-            const result = graphs.set(settings, req.body && req.body.graphs, all);
-            const ids = graphs.usedTags(result);
-            const lines = ids.map((id, index) => {
-                const tag = all.find(t => t.id === id);
-                let first = null;
-                result.forEach(g => { first = first || g.series.find(x => x.tag === id); });
-                return {
-                    device: tag.deviceName, id: tag.id, name: tag.name,
-                    label: (first && first.label) || tag.name,
-                    color: (first && first.color) || COLORS[index % COLORS.length],
-                    yaxis: 1,
-                    spanGaps: true
-                };
-            });
-            await saveChart(runtime, project, lines);
-            await record(runtime, project, ids);
-            const saved = await runtime.project.getProject(null, -1);
-            res.json({ site: siteName, graphs: siteGraphs(saved, settings) });
+            res.json({ site: siteName, graphs: await saveGraphs(runtime, settings, req.body && req.body.graphs) });
         } catch (err) {
             sendError(res, err);
         }
     });
 
     return app;
+}
+
+/**
+ * save the graphs of the page Courbes: the tags of the graphs become the curves of the chart of the page Courbes
+ * (historiques.html, supervision) and are recorded (history)
+ * @returns the saved graphs, with the names of the tags
+ */
+async function saveGraphs(runtime, settings, list) {
+    const project = await runtime.project.getProject(null, -1);
+    const all = allTags(project);
+    const result = graphs.set(settings, list, all);
+    const ids = graphs.usedTags(result);
+    const lines = ids.map((id, index) => {
+        const tag = all.find(t => t.id === id);
+        let first = null;
+        result.forEach(g => { first = first || g.series.find(x => x.tag === id); });
+        return {
+            device: tag.deviceName, id: tag.id, name: tag.name,
+            label: (first && first.label) || tag.name,
+            color: (first && first.color) || COLORS[index % COLORS.length],
+            yaxis: 1,
+            spanGaps: true
+        };
+    });
+    await saveChart(runtime, project, lines);
+    await record(runtime, project, ids);
+    const saved = await runtime.project.getProject(null, -1);
+    return siteGraphs(saved, settings);
 }
 
 /** lines of the chart of the page Courbes */
@@ -255,6 +264,15 @@ function siteGraphs(project, settings) {
 }
 
 const COLORS = ['#1565C0', '#E65100', '#2E7D32', '#C62828', '#6A1B9A', '#00838F', '#F9A825', '#4E342E', '#AD1457', '#37474F'];
+
+/** source of the history of the site, shared by the API of the site and the API v1 */
+let sharedSource = null;
+function historySource(runtime, settings) {
+    if (!sharedSource) {
+        sharedSource = history.create(runtime, settings);
+    }
+    return sharedSource;
+}
 
 /** save a part of the project and update the runtime, like the editor (api/projectData) */
 function save(runtime, cmd, data) {
@@ -378,5 +396,18 @@ function sendError(res, err) {
 }
 
 module.exports = {
-    router: router
+    router: router,
+    // used by the API v1 (api-v1-site.js)
+    historySource: historySource,
+    allTags: allTags,
+    tagInfo: tagInfo,
+    curves: curves,
+    siteGraphs: siteGraphs,
+    saveGraphs: saveGraphs,
+    sample: sample,
+    reduce: reduce,
+    MAX_TAGS: MAX_TAGS,
+    MAX_POINTS: MAX_POINTS,
+    MAX_RANGE: MAX_RANGE,
+    DEFAULT_RANGE: DEFAULT_RANGE
 };

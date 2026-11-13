@@ -58,6 +58,19 @@ function init(app, server, _settings, _logger) {
         fs.mkdirSync(sitesDir);
     }
     loadSites();
+    // API v1: management of the sites and access to the data of each site (api-v1-hub.js)
+    app.use('/api/v1', require('./api-v1-hub').router({
+        get: name => sites[name] || null,
+        list: listSites,
+        info: siteInfo,
+        infoWithPages: async site => Object.assign(siteInfo(site), { pages: site.running ? await getPages(site).catch(() => []) : [] }),
+        create: createSite,
+        rename: renameSite,
+        remove: deleteSite,
+        start: startSite,
+        stop: stopSite,
+        exportZip: exportSite
+    }, settings, logger));
     app.use(onRequest);
     server.on('upgrade', onUpgrade);
     process.on('exit', stopAll);

@@ -1,19 +1,25 @@
 /**
  * custom-SCADA: site-api.js, access to the data of the site from the HTML pages of its folder
- * (copied in the folder of each site, used by courbes.html, historiques.html and api.html)
+ * (copied in the folder of each site, used by courbes.html, historiques.html, configuration.html and api.html)
+ * The data comes from the API v1 of the server: /api/v1/sites/<site_id>/... (the pages only show it)
  *
- *   SiteApi.info()                                  site, tags, curves of the page Courbes
+ *   SiteApi.request(method, path, body)             any service of the API v1 of the site: { data, meta }
+ *   SiteApi.info()                                  site, tags, curves of the page Courbes, graphs
  *   SiteApi.values(['tag1', 'tag2'])                current values
- *   SiteApi.history({ tags, from, to, maxPoints })  history (from/to: Date, ms or ISO)
- *   SiteApi.saveCurves([{ tag, label, color, axis }]) choice of the tags of the page Courbes
- *   SiteApi.drawChart(canvas, series, curves)       curves on a canvas
+ *   SiteApi.history({ tags, from, to, maxPoints, interval })  history (from/to: Date, ms or ISO)
+ *   SiteApi.graphs() / saveGraphs(list)             graphs of the page Courbes
+ *   SiteApi.plot(canvas, options)                   graph on a canvas
  *   SiteApi.historyTable(series)                    { head, rows } with one column per tag
  */
 (function () {
     'use strict';
 
-    // /site/<name>/fichiers/courbes.html -> /site/<name>/api/site
-    var base = location.pathname.replace(/\/fichiers\/[^/]*$/, '') + '/api/site';
+    // /site/<name>/fichiers/courbes.html -> site <name>, API /api/v1/sites/<name>
+    var sitePath = location.pathname.replace(/\/fichiers\/[^/]*$/, '');
+    var siteId = decodeURIComponent(sitePath.replace(/^.*\/site\//, ''));
+    var base = '/api/v1/sites/' + encodeURIComponent(siteId);
+    // old API of the site (choice of the curves of the editor)
+    var oldBase = sitePath + '/api/site';
 
     function headers(json) {
         var result = json ? { 'Content-Type': 'application/json' } : {};
@@ -29,19 +35,37 @@
         return result;
     }
 
+    /** answer of the API: errors { error: { code, message } } (API v1) or { message } (old API) */
     function answer(res) {
-        return res.json().then(function (body) {
+        return res.json().catch(function () { return null; }).then(function (body) {
             if (!res.ok) {
-                throw new Error(body && body.message ? body.message : 'Erreur ' + res.status);
+                var message = body && body.error && body.error.message ? body.error.message : body && body.message ? body.message : 'Erreur ' + res.status;
+                var err = new Error(message);
+                err.status = res.status;
+                err.code = body && body.error && body.error.code;
+                throw err;
             }
             return body;
         });
     }
 
-    function get(path, params) {
+    function queryText(params) {
         var query = Object.keys(params || {}).filter(function (k) { return params[k] !== undefined && params[k] !== null && params[k] !== ''; })
             .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
-        return fetch(base + path + (query ? '?' + query : ''), { headers: headers(false) }).then(answer);
+        return query ? '?' + query : '';
+    }
+
+    /** service of the API v1 of the site: path /tags, /history?..., body (PUT, POST) */
+    function request(method, path, body, params) {
+        var options = { method: method, headers: headers(body !== undefined) };
+        if (body !== undefined) {
+            options.body = JSON.stringify(body);
+        }
+        return fetch(base + path + queryText(params), options).then(answer);
+    }
+
+    function get(path, params) {
+        return request('GET', path, undefined, params);
     }
 
     function time(value) {
@@ -51,12 +75,26 @@
         return value;
     }
 
+    /** site, tags, curves (tags of the graphs), graphs, source of the history */
     function info() {
-        return get('/info');
+        return Promise.all([get('/config'), get('/tags')]).then(function (r) {
+            var config = r[0].data;
+            var curves = [];
+            config.graphs.forEach(function (g) {
+                g.series.forEach(function (s) {
+                    if (!curves.some(function (c) { return c.tagId === s.tag; })) {
+                        curves.push({ tagId: s.tag, name: s.name, label: s.label || s.name, color: s.color, axis: 'gauche' });
+                    }
+                });
+            });
+            return { site: config.site_id, tags: r[1].data, curves: curves, graphs: config.graphs, historySource: config.history, devices: config.devices };
+        });
     }
 
     function values(tags) {
-        return get('/values', { tags: (tags || []).join(',') });
+        return get('/values', { tags: (tags || []).join(',') }).then(function (r) {
+            return { site: r.meta.site_id, time: r.meta.time, values: r.data };
+        });
     }
 
     /** options: { tags, from, to, maxPoints, interval (seconds: one average value per interval) } */
@@ -68,26 +106,23 @@
             to: time(options.to),
             maxPoints: options.maxPoints,
             interval: options.interval || ''
+        }).then(function (r) {
+            return { site: r.meta.site_id, from: r.meta.from, to: r.meta.to, interval: r.meta.interval, source: r.meta.source, series: r.data };
         });
     }
 
     /** graphs of the page Courbes */
     function graphs() {
-        return get('/graphs');
+        return get('/config/graphs').then(function (r) { return { site: r.meta.site_id, graphs: r.data }; });
     }
 
     function saveGraphs(list) {
-        return fetch(base + '/graphs', { method: 'PUT', headers: headers(true), body: JSON.stringify({ graphs: list }) }).then(answer);
+        return request('PUT', '/config/graphs', { graphs: list }).then(function (r) { return { site: r.meta.site_id, graphs: r.data }; });
     }
 
-    /** chartMode (optional): { mode: 'temps' | 'xy', xTag: tag of the axis X } */
-    function saveCurves(curves, chartMode) {
-        var body = { curves: curves };
-        if (chartMode) {
-            body.mode = chartMode.mode;
-            body.xTag = chartMode.xTag;
-        }
-        return fetch(base + '/curves', { method: 'PUT', headers: headers(true), body: JSON.stringify(body) }).then(answer);
+    /** old choice of the curves (one chart) */
+    function saveCurves(curves) {
+        return fetch(oldBase + '/curves', { method: 'PUT', headers: headers(true), body: JSON.stringify({ curves: curves }) }).then(answer);
     }
 
     function pad(n) {
@@ -816,7 +851,7 @@
      */
     function exportFile(kind, body, name) {
         body.tzOffset = new Date().getTimezoneOffset();
-        var url = base.replace(/\/api\/site$/, '/api/export/') + kind;
+        var url = sitePath + '/api/export/' + kind;
         return fetch(url, { method: 'POST', headers: headers(true), body: JSON.stringify(body) }).then(function (res) {
             if (!res.ok) {
                 return res.json().then(function (b) { throw new Error(b && b.message ? b.message : 'Erreur ' + res.status); });
@@ -827,6 +862,8 @@
 
     window.SiteApi = {
         base: base,
+        siteId: siteId,
+        request: request,
         info: info,
         values: values,
         history: history,

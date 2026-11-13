@@ -351,52 +351,141 @@ function historyLive() {
 </script>`;
 }
 
-/** api.html: services of the API of the site, with a test of each service */
+/**
+ * api.html: documentation of the API v1 of the server (the API is in the server: api-v1-hub.js, api-v1-site.js),
+ * with a form to test the services; the page does not give the data itself
+ */
 function apiHtml() {
-    const base = `/site/${siteName}/api/site`;
+    const base = `/api/v1/sites/${siteName}`;
+    const row = (method, path, params, answer) => [method, path, params, answer];
     return document(`API - ${siteName}`, `${navBar('api.html')}
 <header>
-  <h1>API du site <small>${esc(siteName)}</small></h1>
-  <p class="info">Services d'accès aux données de ce site (tags, valeurs, historique). Chaque site a sa propre API : elle ne donne que les données du site.
-     Les pages du dossier utilisent le script <a href="site-api.js">site-api.js</a>.</p>
+  <h1>API v1 <small>${esc(siteName)}</small></h1>
+  <p class="info">L'API est développée côté serveur (FUXA). Cette page n'est qu'une documentation avec un formulaire de test :
+     les pages HTML du site (Courbes, Historiques, Configuration) utilisent ces services avec le script <a href="site-api.js">site-api.js</a>.
+     Les données sont séparées par site : chaque adresse contient l'identifiant du site (site_id = <b>${esc(siteName)}</b>).</p>
 </header>
 <section>
-  <h2>Services</h2>
-  ${table(['Service', 'Adresse', 'Paramètres', 'Réponse'], [
-        ['Informations', `GET ${base}/info`, '', 'site, tags (nom, connexion, adresse, type, enregistré), curves (tags de la page Courbes), source de l\'historique'],
-        ['Valeurs actuelles', `GET ${base}/values`, 'tags=nom1,nom2 (tous les tags si absent)', 'values : nom, valeur, timestamp'],
-        ['Historique', `GET ${base}/history`, 'tags=nom1,nom2 (tags des courbes si absent)\nfrom, to : ms ou date ISO (8 dernières heures si absent)\nmaxPoints : 2000 par défaut\ninterval : une valeur (moyenne) toutes les n secondes', 'series : nom, count, values [{ t : ms, v : valeur }]'],
-        ['Graphiques', `GET ${base}/graphs`, '', 'graphs : titre, mode (temps / xy), tag X, tags, unités, couleurs, limites, période, échantillonnage']
+  <h2>Format des réponses</h2>
+  ${table(['Cas', 'Code HTTP', 'Corps de la réponse'], [
+        ['Succès', '200 (201 pour une création)', '{ "data": ..., "meta": { "site_id": ..., ... } }'],
+        ['Requête invalide (paramètre, date, JSON)', '400', '{ "error": { "code": "invalid_request", "message": "...", "details": { "param": ... } } }'],
+        ['Accès refusé (sécurité FUXA activée, jeton absent ou expiré)', '401 / 403', 'jeton à envoyer dans l\'en-tête x-access-token'],
+        ['Site, tag, graphique, alarme ou service inconnu', '404', 'codes site_not_found, tag_not_found, graph_not_found, alarm_not_found, unknown_service'],
+        ['Conflit (site déjà existant)', '409', 'code site_exists'],
+        ['Site arrêté ou en démarrage', '503', 'codes site_stopped, site_starting'],
+        ['Erreur du serveur', '500 / 502', 'code server_error, site_unavailable']
     ])}
+</section>
+<section>
+  <h2>Sites</h2>
+  ${table(['Méthode', 'Adresse', 'Paramètres / corps', 'Réponse (data)'], [
+        row('GET', '/api/v1', '', 'liste des services'),
+        row('GET', '/api/v1/sites', '', 'sites : site_id, state (running, stopped, starting), url, pages, fichiers'),
+        row('POST', '/api/v1/sites', '{ "site_id": "Nouveau_site" }', 'site créé (201)'),
+        row('GET', `/api/v1/sites/{site_id}`, '', 'un site avec ses pages'),
+        row('PUT', `/api/v1/sites/{site_id}`, '{ "site_id": "Nouveau_nom" }', 'site renommé'),
+        row('DELETE', `/api/v1/sites/{site_id}`, '', 'site supprimé (déplacé dans sites/_supprimes)'),
+        row('POST', `/api/v1/sites/{site_id}/start | stop`, '', 'site démarré / arrêté'),
+        row('GET', `/api/v1/sites/{site_id}/export`, '', 'dossier du site (.zip)')
+    ])}
+</section>
+<section>
+  <h2>Configuration</h2>
+  ${table(['Méthode', 'Adresse', 'Paramètres / corps', 'Réponse (data)'], [
+        row('GET', `${base}/config`, '', 'connexions, pages, menu, graphiques, source de l\'historique'),
+        row('GET', `${base}/config/graphs`, '', 'graphiques de la page Courbes'),
+        row('PUT', `${base}/config/graphs`, '{ "graphs": [ { "title", "mode", "xTag", "series": [ { "tag", "unit", "color", "min", "max" } ], ... } ] }', 'graphiques enregistrés'),
+        row('GET', `${base}/config/history`, '', 'source de l\'historique (sans mot de passe)'),
+        row('PUT', `${base}/config/history`, '{ "source": "fuxa" | "postgres", ... }', 'source enregistrée'),
+        row('POST', `${base}/config/history/test`, 'paramètres PostgreSQL', 'tables et colonnes')
+    ])}
+</section>
+<section>
+  <h2>Équipements, tags et valeurs</h2>
+  ${table(['Méthode', 'Adresse', 'Paramètres / corps', 'Réponse (data)'], [
+        row('GET', `${base}/devices`, '', 'connexions avec leur état (connect-ok, connect-error...)'),
+        row('GET', `${base}/tags`, 'search : texte (nom, équipement, adresse, description, catégorie)\ndevice : nom ou id de la connexion\nrecorded : true / false', 'tags : id, name, device, category, address, type, recorded'),
+        row('GET', `${base}/tags/{tag}`, 'tag : nom ou id', 'tag avec value et timestamp'),
+        row('GET', `${base}/values`, 'tags=nom1,nom2 (tous les tags si absent)', 'valeurs instantanées')
+    ])}
+</section>
+<section>
+  <h2>Historiques et courbes</h2>
+  ${table(['Méthode', 'Adresse', 'Paramètres / corps', 'Réponse (data)'], [
+        row('GET', `${base}/history`, 'tags=nom1,nom2 (tags des graphiques si absent)\nfrom, to : ms ou date ISO (8 dernières heures si absent, 1 an au plus)\ninterval : une valeur moyenne toutes les n secondes\nmaxPoints : 10 à 200000 (2000 par défaut)', 'séries : tag, count, values [{ t : ms, v : valeur }]'),
+        row('GET', `${base}/curves`, '', 'graphiques'),
+        row('GET', `${base}/curves/{graph_id}/data`, 'from, to (période du graphique si absent), interval', 'mode temps : values [{ t, v }] ; mode XY : points [{ x, y, t }]')
+    ])}
+</section>
+<section>
+  <h2>Alarmes</h2>
+  ${table(['Méthode', 'Adresse', 'Paramètres / corps', 'Réponse (data)'], [
+        row('GET', `${base}/alarms`, 'type : highhigh, high, low, info\ntag : nom du tag\ntext : texte', 'alarmes actives : alarm_id, tag, type, text, status, ontime, toack'),
+        row('GET', `${base}/alarms/history`, 'from, to (24 dernières heures si absent)', 'historique des alarmes'),
+        row('POST', `${base}/alarms/{alarm_id}/ack`, '', 'alarme acquittée'),
+        row('POST', `${base}/alarms/ack`, '', 'toutes les alarmes acquittées')
+    ])}
+</section>
+<section>
+  <h2>Tester</h2>
+  <div class="period">
+    <select id="method"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select>
+    <input id="path" value="${esc(base)}/tags?search=niveau" size="70">
+    <button id="run" class="primary">Envoyer</button>
+  </div>
+  <div class="period"><textarea id="body" rows="3" cols="90" placeholder='Corps JSON (POST, PUT), ex. { "site_id": "Nouveau_site" }'></textarea></div>
+  <p class="info">Exemples :
+    <a href="#" data-path="${esc(base)}/config">config</a>,
+    <a href="#" data-path="${esc(base)}/devices">devices</a>,
+    <a href="#" data-path="${esc(base)}/values">values</a>,
+    <a href="#" data-path="${esc(base)}/curves">curves</a>,
+    <a href="#" data-path="${esc(base)}/alarms">alarms</a>,
+    <a href="#" data-path="/api/v1/sites">sites</a>,
+    <a href="#" data-path="${esc(base)}/history?tags=inconnu">erreur 404</a></p>
+  <pre id="result">Résultat...</pre>
 </section>
 <section>
   <h2>Utilisation dans une page HTML du dossier</h2>
   <pre>&lt;script src="site-api.js"&gt;&lt;/script&gt;
 &lt;script&gt;
-  SiteApi.info().then(function (info) { console.log(info.tags, info.curves); });
-  SiteApi.values(['reservoir_niveau']).then(function (r) { console.log(r.values); });
-  SiteApi.history({ tags: ['reservoir_niveau'], from: new Date(Date.now() - 3600000), to: new Date() })
+  SiteApi.request('GET', '/tags', undefined, { search: 'niveau' }).then(function (r) { console.log(r.data); });
+  SiteApi.values(['niveau_reservoir_s7']).then(function (r) { console.log(r.values); });
+  SiteApi.history({ tags: ['niveau_reservoir_s7'], from: new Date(Date.now() - 3600000), to: new Date(), interval: 60 })
     .then(function (r) { console.log(r.series); });
 &lt;/script&gt;</pre>
 </section>
-<section>
-  <h2>Tester</h2>
-  <div class="period">
-    <select id="service"><option value="/info">info</option><option value="/values">values</option><option value="/history">history</option></select>
-    <input id="params" placeholder="tags=reservoir_niveau&amp;from=..." size="60">
-    <button id="run" class="primary">Envoyer</button>
-  </div>
-  <pre id="result">Résultat...</pre>
-</section>
 <script src="site-api.js"></script>
 <script>
+  document.querySelectorAll('[data-path]').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      document.getElementById('method').value = 'GET';
+      document.getElementById('path').value = a.getAttribute('data-path');
+      document.getElementById('run').click();
+    });
+  });
   document.getElementById('run').addEventListener('click', function () {
-    var url = SiteApi.base + document.getElementById('service').value;
-    var params = document.getElementById('params').value.trim();
-    document.getElementById('result').textContent = 'GET ' + url + (params ? '?' + params : '') + ' ...';
-    fetch(url + (params ? '?' + params : '')).then(function (r) { return r.json(); }).then(function (body) {
-      document.getElementById('result').textContent = JSON.stringify(body, null, 2);
-    }).catch(function (err) { document.getElementById('result').textContent = err.message; });
+    var method = document.getElementById('method').value, url = document.getElementById('path').value.trim();
+    var text = document.getElementById('body').value.trim();
+    var result = document.getElementById('result');
+    var options = { method: method, headers: {} };
+    if (text && method !== 'GET' && method !== 'DELETE') {
+      options.headers['Content-Type'] = 'application/json';
+      options.body = text;
+    }
+    try {
+      var token = (JSON.parse(sessionStorage.getItem('currentUser')) || {}).token;
+      if (token) { options.headers['x-access-token'] = token; }
+    } catch (err) { /* no user */ }
+    result.textContent = method + ' ' + url + ' ...';
+    fetch(url, options).then(function (r) {
+      return r.text().then(function (t) {
+        var shown = t;
+        try { shown = JSON.stringify(JSON.parse(t), null, 2); } catch (err) { /* not JSON */ }
+        result.textContent = 'HTTP ' + r.status + '\\n' + shown;
+      });
+    }).catch(function (err) { result.textContent = err.message; });
   });
 </script>`);
 }
